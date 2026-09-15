@@ -1,0 +1,24 @@
+# Environnement virtuel
+llm-env/
+venv/
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Données générées (regénérables via corpus.py / prepare.py)
+corpus_fr.txt
+train.bin
+val.bin
+meta.pkl
+
+# Modèle entraîné
+checkpoint.pt
+*.pt
+
+# OS / éditeurs
+.DS_Store
+.vscode/
+.idea/
