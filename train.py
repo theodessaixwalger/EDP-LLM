@@ -1,52 +1,59 @@
+import math
+import os
+import sys
 import torch
 import numpy as np
-import pickle
 import time
 from model import MonLLM
+from tokeniseur import Tokeniseur
+import chemins
 
 # --- Configuration ---
-# Ces valeurs définissent la taille du réseau : elles doivent rester identiques
-# pour recharger le checkpoint dans generate.py.
-taille_contexte = 256   # nombre de caractères que le modèle voit d'un coup
-taille_batch = 64       # séquences traitées en parallèle à chaque itération
-dim_embed = 384
-nb_tetes = 6
-nb_blocs = 6
-dropout = 0.2           # neurones désactivés au hasard, contre le surapprentissage
+taille_contexte = 4096
+taille_batch = 4
+dim_embed = 640
+nb_tetes = 10
+nb_blocs = 10
+dropout = 0.0
 taux_apprentissage = 3e-4
-max_iterations = 5000
-intervalle_eval = 250   # fréquence des mesures de perte et des sauvegardes
-iterations_eval = 200   # batchs moyennés à chaque mesure
+max_iterations = 80000
+intervalle_eval = 1000
+iterations_eval = 50
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+# python train.py --reprendre : repart de la dernière sauvegarde si l'entraînement a été coupé
+FICHIER_REPRISE = os.path.join(chemins.MODELES, 'reprise.pt')
+reprendre = '--reprendre' in sys.argv
+
+iterations_echauffement = 1000
+taux_final = taux_apprentissage / 10
+
+# Le taux monte doucement pendant 1000 itérations puis redescend en cosinus
+def taux(iteration):
+    if iteration < iterations_echauffement:
+        return taux_apprentissage * (iteration + 1) / iterations_echauffement
+    progression = (iteration - iterations_echauffement) / (max_iterations - iterations_echauffement)
+    return taux_final + 0.5 * (taux_apprentissage - taux_final) * (1 + math.cos(math.pi * progression))
+
 print(f"Device utilisé : {device}")
 
 # --- Chargement des données ---
-# memmap : les fichiers restent sur le disque, seuls les morceaux tirés sont
-# chargés en mémoire. Indispensable ici, train.bin fait ~30 Mo.
-train_data = np.memmap('train.bin', dtype=np.uint16, mode='r')
-val_data = np.memmap('val.bin', dtype=np.uint16, mode='r')
-# Le vocabulaire vient de prepare.py : la taille de la couche de sortie en dépend.
-with open('meta.pkl', 'rb') as f:
-    meta = pickle.load(f)
-taille_vocab = meta['taille_vocab']
+# memmap : train.bin fait plus de 3 Go, on le laisse sur le disque
+train_data = np.memmap(chemins.TRAIN_BIN, dtype=np.uint16, mode='r')
+val_data = np.memmap(chemins.VAL_BIN, dtype=np.uint16, mode='r')
+taille_vocab = Tokeniseur.charger().taille_vocab
 
 def get_batch(split):
-    """Tire au hasard taille_batch extraits du corpus."""
     data = train_data if split == 'train' else val_data
-    # Positions de départ aléatoires, choisies assez tôt dans le fichier pour
-    # qu'il reste toujours une séquence complète à lire derrière.
     ix = torch.randint(len(data) - taille_contexte, (taille_batch,))
     x = torch.stack([torch.from_numpy(data[i:i+taille_contexte].astype(np.int64)) for i in ix])
-    # y est x décalé d'un cran : la cible d'une position est le caractère suivant
     y = torch.stack([torch.from_numpy(data[i+1:i+1+taille_contexte].astype(np.int64)) for i in ix])
     return x.to(device), y.to(device)
 
 @torch.no_grad()
 def estimer_perte():
-    """Moyenne la perte sur plusieurs batchs pour lisser le bruit d'un tirage
-    isolé. Un écart qui se creuse entre val et train signale du surapprentissage."""
     resultats = {}
-    modele.eval()  # désactive le dropout : on mesure, on n'entraîne pas
+    modele.eval()
     for split in ['train', 'val']:
         pertes = torch.zeros(iterations_eval)
         for k in range(iterations_eval):
@@ -54,7 +61,7 @@ def estimer_perte():
             _, perte = modele(X, Y)
             pertes[k] = perte.item()
         resultats[split] = pertes.mean().item()
-    modele.train()  # retour en mode entraînement
+    modele.train()
     return resultats
 
 # --- Modèle et optimiseur ---
@@ -65,23 +72,35 @@ print(f"Nombre de paramètres : {nb_params/1e6:.2f}M")
 
 optimiseur = torch.optim.AdamW(modele.parameters(), lr=taux_apprentissage)
 
+depart = 0
+if reprendre and os.path.exists(FICHIER_REPRISE):
+    etat = torch.load(FICHIER_REPRISE, map_location=device, weights_only=True)
+    modele.load_state_dict(etat['modele'])
+    optimiseur.load_state_dict(etat['optimiseur'])
+    depart = int(etat['iteration'])
+    print(f"Reprise à l'itération {depart}")
+
 # --- Boucle d'entraînement ---
 debut = time.time()
-for iteration in range(max_iterations):
-
-    # Point de contrôle régulier : on affiche l'avancement et on sauvegarde, ce
-    # qui permet de reprendre le modèle même si l'entraînement est interrompu.
-    if iteration % intervalle_eval == 0:
+for iteration in range(depart, max_iterations):
+    if (iteration % intervalle_eval == 0 and iteration > depart) or iteration == max_iterations - 1 \
+            or iteration == 0:
         pertes = estimer_perte()
         temps_ecoule = time.time() - debut
         print(f"step {iteration}: train loss {pertes['train']:.4f}, val loss {pertes['val']:.4f} ({temps_ecoule:.0f}s)")
-        torch.save(modele.state_dict(), 'checkpoint.pt')
+        torch.save(modele.state_dict(), chemins.MODELE_BASE)
+        torch.save({'modele': modele.state_dict(), 'optimiseur': optimiseur.state_dict(),
+                    'iteration': iteration}, FICHIER_REPRISE)
 
-    # Une itération = un batch : prédiction, mesure de l'erreur, correction des poids
+    for groupe in optimiseur.param_groups:
+        groupe['lr'] = taux(iteration)
     xb, yb = get_batch('train')
     logits, perte = modele(xb, yb)
-    optimiseur.zero_grad(set_to_none=True)  # sans remise à zéro les gradients s'additionnent
-    perte.backward()                        # calcule le gradient de l'erreur
-    optimiseur.step()                       # ajuste les poids dans le sens opposé
+    optimiseur.zero_grad(set_to_none=True)
+    perte.backward()
+    torch.nn.utils.clip_grad_norm_(modele.parameters(), 1.0)
+    optimiseur.step()
 
-print("Entraînement terminé. Modèle sauvegardé dans checkpoint.pt")
+if os.path.exists(FICHIER_REPRISE):
+    os.remove(FICHIER_REPRISE)
+print(f"Entraînement terminé. Modèle sauvegardé dans {chemins.MODELE_BASE}")

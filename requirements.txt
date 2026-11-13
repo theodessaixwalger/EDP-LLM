@@ -1,3 +1,11 @@
 torch>=2.5
 numpy>=1.26
 requests>=2.31
+pyarrow>=17.0
+
+# Collecte du corpus de pré-entraînement (scripts collecte_*.py)
+wikipedia-api>=0.6
+feedparser>=6.0
+trafilatura>=1.12
+praw>=7.7
+datasets>=3.0

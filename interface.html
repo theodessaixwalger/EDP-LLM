@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EDP-LLM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>
+:root {
+  --fond: #ffffff;
+  --fond-2: #f7f7f8;
+  --fond-3: #ececf0;
+  --bord: #e3e3e8;
+  --texte: #1f2023;
+  --texte-2: #6b6c73;
+  --texte-3: #9a9ba3;
+  --accent: #5b5bd6;
+  --accent-doux: #eeeefc;
+  --bulle: #f1f1f4;
+  --ombre: 0 2px 8px rgba(0,0,0,.06);
+  --rayon: 14px;
+  --sans: Inter, -apple-system, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+}
+[data-theme="sombre"] {
+  --fond: #1c1c1f;
+  --fond-2: #26262a;
+  --fond-3: #303035;
+  --bord: #36363c;
+  --texte: #ececf0;
+  --texte-2: #a3a4ad;
+  --texte-3: #74757e;
+  --accent: #8b8bf0;
+  --accent-doux: #2b2b40;
+  --bulle: #2e2e34;
+  --ombre: 0 2px 10px rgba(0,0,0,.3);
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--fond); color: var(--texte);
+  font: 400 15px/1.6 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  display: grid; grid-template-columns: 268px minmax(0, 1fr);
+  /* Seul le fil de la conversation défile, pas toute la page */
+  grid-template-rows: minmax(0, 1fr);
+}
+button { font: inherit; cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- Barre latérale ---------- */
+.lateral {
+  background: var(--fond-2); border-right: 1px solid var(--bord);
+  display: flex; flex-direction: column; gap: 18px;
+  padding: 14px; overflow-y: auto;
+}
+.marque { display: flex; align-items: center; gap: 9px; padding: 4px 6px; }
+.jeton {
+  width: 26px; height: 26px; border-radius: 8px; flex: none;
+  background: var(--accent); display: grid; place-items: center;
+}
+.jeton::after { content: ""; width: 9px; height: 9px; background: #fff; border-radius: 2px; transform: rotate(45deg); }
+.marque b { font-weight: 600; font-size: 14.5px; letter-spacing: -.01em; }
+
+.neuf {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; padding: 10px; border-radius: 10px;
+  border: 1px solid var(--bord); background: var(--fond); color: var(--texte);
+  font-weight: 500; font-size: 14px;
+}
+.neuf:hover { background: var(--fond-3); }
+
+.groupe { display: flex; flex-direction: column; gap: 9px; }
+.groupe > h2 {
+  margin: 0; padding: 0 6px; font-size: 12px; font-weight: 500; color: var(--texte-3);
+}
+.fiche {
+  background: var(--fond); border: 1px solid var(--bord);
+  border-radius: 11px; padding: 11px 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.rang { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13px; }
+.rang span { color: var(--texte-2); }
+.rang b { font-weight: 500; font-family: var(--mono); font-size: 12.5px; }
+
+.jauge { display: flex; height: 6px; border-radius: 99px; overflow: hidden; background: var(--fond-3); }
+.jauge i { display: block; transition: width .3s ease; }
+.z-lu { background: var(--accent); }
+.z-libre { background: transparent; }
+.z-reserve { background: var(--bord); }
+
+details.replie > summary {
+  list-style: none; cursor: pointer; font-size: 12.5px; color: var(--texte-2);
+  padding: 2px 6px; border-radius: 6px;
+}
+details.replie > summary::-webkit-details-marker { display: none; }
+details.replie > summary::before { content: "▸ "; color: var(--texte-3); }
+details.replie[open] > summary::before { content: "▾ "; }
+details.replie > summary:hover { color: var(--texte); background: var(--fond-3); }
+.brut {
+  margin-top: 8px; padding: 10px; border-radius: 9px;
+  background: var(--fond); border: 1px solid var(--bord);
+  font: 400 11.5px/1.6 var(--mono); white-space: pre-wrap; word-break: break-word;
+  max-height: 220px; overflow-y: auto; color: var(--texte-2);
+}
+.brut.sortie { color: var(--texte-3); text-decoration: line-through; }
+
+.pied { margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.theme {
+  border: 1px solid var(--bord); background: var(--fond); color: var(--texte-2);
+  border-radius: 9px; padding: 7px 11px; font-size: 13px;
+}
+.theme:hover { background: var(--fond-3); color: var(--texte); }
+
+/* ---------- Conversation ---------- */
+.principal { display: grid; grid-template-rows: auto minmax(0,1fr) auto; min-width: 0; min-height: 0; }
+.entete {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 20px; border-bottom: 1px solid var(--bord);
+}
+.ouvrir-lateral { display: none; border: 1px solid var(--bord); background: var(--fond); color: var(--texte); border-radius: 9px; padding: 6px 10px; }
+.entete h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.entete small { color: var(--texte-3); font-family: var(--mono); font-size: 12px; }
+
+.fil { overflow-y: auto; padding: 26px 20px 10px; scroll-behavior: smooth; }
+.colonne { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 26px; }
+
+.accueil { max-width: 560px; margin: min(14vh, 110px) auto 0; text-align: center; }
+.accueil h2 { margin: 0 0 10px; font-size: 27px; font-weight: 600; letter-spacing: -.02em; }
+.accueil p { margin: 0 auto 26px; color: var(--texte-2); max-width: 46ch; }
+.pistes { display: flex; flex-wrap: wrap; gap: 9px; justify-content: center; }
+.piste {
+  border: 1px solid var(--bord); background: var(--fond); color: var(--texte);
+  border-radius: 99px; padding: 8px 15px; font-size: 13.5px;
+}
+.piste:hover { background: var(--fond-3); border-color: var(--texte-3); }
+
+.tour { display: flex; flex-direction: column; gap: 7px; }
+.tour.de-vous { align-items: flex-end; }
+.bulle {
+  background: var(--bulle); border-radius: 18px; padding: 11px 16px;
+  max-width: 82%; white-space: pre-wrap; word-wrap: break-word;
+}
+.ligne-ia { display: flex; gap: 13px; }
+.avatar {
+  width: 27px; height: 27px; border-radius: 8px; flex: none; margin-top: 1px;
+  background: var(--accent); display: grid; place-items: center;
+}
+.avatar::after { content: ""; width: 9px; height: 9px; background: #fff; border-radius: 2px; transform: rotate(45deg); }
+.propos { min-width: 0; flex: 1; white-space: pre-wrap; word-wrap: break-word; padding-top: 1px; }
+.propos.ecrit::after {
+  content: ""; display: inline-block; width: 7px; height: 16px;
+  background: var(--texte); vertical-align: -3px; margin-left: 2px;
+  animation: battement 1.1s steps(2) infinite;
+}
+@keyframes battement { 50% { opacity: 0; } }
+
+.actions { display: flex; gap: 2px; margin-left: 40px; opacity: 0; transition: opacity .15s; }
+.tour:hover .actions, .tour:focus-within .actions { opacity: 1; }
+.icone {
+  border: 0; background: none; color: var(--texte-3);
+  border-radius: 7px; padding: 5px 7px; font-size: 13px; line-height: 1;
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.icone:hover { background: var(--fond-3); color: var(--texte); }
+.icone.actif { color: var(--accent); background: var(--accent-doux); }
+
+/* ---------- Correction ---------- */
+.correction {
+  margin-left: 40px; border: 1px solid var(--bord); border-radius: 13px;
+  background: var(--fond-2); padding: 14px; box-shadow: var(--ombre);
+}
+.correction > p { margin: 0 0 11px; font-size: 13.5px; color: var(--texte-2); }
+.correction textarea {
+  width: 100%; min-height: 66px; resize: vertical; padding: 10px 12px;
+  border: 1px solid var(--bord); border-radius: 10px;
+  background: var(--fond); color: var(--texte); font: 400 14.5px/1.55 var(--sans);
+}
+.rangee { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 11px; align-items: center; }
+.bouton {
+  border-radius: 9px; padding: 8px 14px; font-size: 13.5px; font-weight: 500;
+  border: 1px solid var(--bord); background: var(--fond); color: var(--texte);
+}
+.bouton:hover:not(:disabled) { background: var(--fond-3); }
+.bouton.plein { background: var(--accent); border-color: var(--accent); color: #fff; }
+.bouton.plein:hover:not(:disabled) { filter: brightness(1.08); }
+.bouton:disabled { opacity: .5; cursor: default; }
+.mot { font-size: 12.5px; color: var(--texte-3); }
+.trace { margin-left: 40px; font-size: 12.5px; color: var(--texte-3); display: flex; gap: 6px; }
+.source { margin: 2px 0 0 40px; font-size: 12px; color: var(--texte-3); }
+.source b { font-weight: 500; color: var(--texte-2, var(--texte-3)); }
+
+/* ---------- Composeur ---------- */
+.composeur { padding: 10px 20px 18px; }
+.cadre {
+  max-width: 720px; margin: 0 auto;
+  display: flex; align-items: flex-end; gap: 8px;
+  background: var(--fond-2); border: 1px solid var(--bord);
+  border-radius: 24px; padding: 8px 8px 8px 18px;
+  transition: border-color .15s;
+}
+.cadre:focus-within { border-color: var(--texte-3); }
+.cadre textarea {
+  flex: 1; border: 0; background: none; resize: none; color: var(--texte);
+  font: 400 15px/1.5 var(--sans); padding: 9px 0; max-height: 160px; outline: none;
+}
+.cadre textarea::placeholder { color: var(--texte-3); }
+.envoyer {
+  width: 34px; height: 34px; flex: none; border: 0; border-radius: 50%;
+  background: var(--accent); color: #fff; display: grid; place-items: center;
+  font-size: 15px; transition: opacity .15s;
+}
+.envoyer:disabled { opacity: .3; cursor: default; }
+.sous { max-width: 720px; margin: 9px auto 0; text-align: center; font-size: 12px; color: var(--texte-3); }
+.sous b { color: var(--accent); font-weight: 500; }
+
+/* ---------- Mobile ---------- */
+@media (max-width: 860px) {
+  body { grid-template-columns: 1fr; }
+  .lateral {
+    position: fixed; inset: 0 auto 0 0; width: 280px; z-index: 20;
+    transform: translateX(-100%); transition: transform .22s ease;
+  }
+  .lateral.ouverte { transform: none; box-shadow: 0 0 40px rgba(0,0,0,.25); }
+  .ouvrir-lateral { display: block; }
+  .voile { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 10; }
+  .voile[hidden] { display: none; }
+  .bulle { max-width: 90%; }
+  .actions, .correction, .trace, .source { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) { *, *::after { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+
+<aside class="lateral" id="lateral">
+  <div class="marque"><span class="jeton"></span><b>EDP-LLM</b></div>
+  <button class="neuf" id="neuf"><span>+</span> Nouvelle conversation</button>
+
+  <div class="groupe">
+    <h2>Modèle</h2>
+    <div class="fiche">
+      <div class="rang"><span>poids</span><b id="i-modele">—</b></div>
+      <div class="rang"><span>calcul</span><b id="i-device">—</b></div>
+      <div class="rang"><span>vocabulaire</span><b id="i-vocab">—</b></div>
+      <div class="rang"><span>Wikipédia</span><b id="i-passages">—</b></div>
+      <div class="rang"><span>préférences</span><b id="i-prefs">—</b></div>
+    </div>
+  </div>
+
+  <div class="groupe">
+    <h2>Mémoire</h2>
+    <div class="fiche">
+      <div class="jauge" role="img" aria-label="Occupation de la fenêtre de contexte">
+        <i class="z-lu" id="z-lu" style="width:0%"></i>
+        <i class="z-libre" id="z-libre" style="width:71%"></i>
+        <i class="z-reserve" id="z-reserve" style="width:29%"></i>
+      </div>
+      <div class="rang"><span>caractères lus</span><b id="i-longueur">0 / 362</b></div>
+      <div class="rang"><span>échanges vus</span><b id="i-echanges">0 / 0</b></div>
+      <details class="replie" id="d-brut" hidden>
+        <summary>Texte transmis au modèle</summary>
+        <div class="brut" id="brut"></div>
+      </details>
+      <details class="replie" id="d-sortis" hidden>
+        <summary>Sortis de la fenêtre</summary>
+        <div class="brut sortie" id="sortis"></div>
+      </details>
+    </div>
+  </div>
+
+  <div class="pied">
+    <button class="theme" id="theme">Thème sombre</button>
+  </div>
+</aside>
+<div class="voile" id="voile" hidden></div>
+
+<main class="principal">
+  <header class="entete">
+    <button class="ouvrir-lateral" id="ouvrir" aria-label="Afficher le panneau">☰</button>
+    <h1>Conversation</h1>
+    <small id="etiquette"></small>
+  </header>
+
+  <div class="fil" id="fil">
+    <div class="colonne" id="colonne">
+      <div class="accueil" id="accueil">
+        <h2>Que voulez-vous lui dire ?</h2>
+        <p id="pitch">Il n'a pas d'autre mémoire que sa fenêtre de contexte, et lit Wikipédia avant une question de culture. Quand une réponse est ratée, corrigez-la : elle servira à l'entraîner.</p>
+        <div class="pistes">
+          <button class="piste">Je m'appelle Théo</button>
+          <button class="piste">Comment je m'appelle ?</button>
+          <button class="piste">Raconte-moi une blague</button>
+          <button class="piste">J'habite à Brest</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="composeur">
+    <form class="cadre" id="formulaire">
+      <textarea id="message" rows="1" placeholder="Écrivez un message" aria-label="Votre message"></textarea>
+      <button class="envoyer" id="envoyer" type="submit" aria-label="Envoyer">↑</button>
+    </form>
+    <p class="sous" id="sous">Petit modèle entraîné sur des romans français et Wikipédia. Il se trompe souvent — c'est le but.</p>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fil = $('fil'), colonne = $('colonne');
+let occupe = false;
+let presentation = 'Petit modèle entraîné sur des romans français et Wikipédia. Il se trompe souvent — c\'est le but.';
+
+/* ---------- Thème ---------- */
+const themeInitial = localStorage.getItem('theme')
+  || (matchMedia('(prefers-color-scheme: dark)').matches ? 'sombre' : 'clair');
+function appliquerTheme(nom) {
+  document.documentElement.dataset.theme = nom;
+  $('theme').textContent = nom === 'sombre' ? 'Thème clair' : 'Thème sombre';
+  localStorage.setItem('theme', nom);
+}
+appliquerTheme(themeInitial);
+$('theme').onclick = () => appliquerTheme(
+  document.documentElement.dataset.theme === 'sombre' ? 'clair' : 'sombre');
+
+/* ---------- Panneau mobile ---------- */
+const basculer = (ouvert) => {
+  $('lateral').classList.toggle('ouverte', ouvert);
+  $('voile').hidden = !ouvert;
+};
+$('ouvrir').onclick = () => basculer(true);
+$('voile').onclick = () => basculer(false);
+
+/* ---------- Affichage ---------- */
+function versLeBas() { fil.scrollTop = fil.scrollHeight; }
+
+function tourDeVous(texte) {
+  const tour = document.createElement('div');
+  tour.className = 'tour de-vous';
+  const bulle = document.createElement('div');
+  bulle.className = 'bulle';
+  bulle.textContent = texte;
+  tour.append(bulle);
+  colonne.append(tour);
+  versLeBas();
+}
+
+function tourDuModele(texte = '', sources = []) {
+  const tour = document.createElement('div');
+  tour.className = 'tour de-lui';
+  tour.innerHTML = '<div class="ligne-ia"><div class="avatar"></div><div class="propos"></div></div>';
+  const propos = tour.querySelector('.propos');
+  propos.textContent = texte;
+  colonne.append(tour);
+  afficherSources(tour, sources);
+  versLeBas();
+  return { tour, propos };
+}
+
+const OUTILS = ['Calculatrice', 'Horloge'];
+function afficherSources(tour, sources) {
+  if (!sources || !sources.length) return;
+  const ligne = document.createElement('p');
+  ligne.className = 'source';
+  ligne.append(OUTILS.includes(sources[0]) ? 'Outil : ' : 'Lu dans Wikipédia : ');
+  sources.forEach((titre, i) => {
+    if (i) ligne.append(', ');
+    const b = document.createElement('b');
+    b.textContent = titre;
+    ligne.append(b);
+  });
+  tour.querySelector('.ligne-ia').after(ligne);
+}
+
+function majFenetre(f) {
+  const part = (n) => Math.max(0, Math.min(100, (n / f.capacite) * 100));
+  $('z-lu').style.width = part(f.longueur) + '%';
+  $('z-reserve').style.width = part(f.reserve) + '%';
+  $('z-libre').style.width = part(f.capacite - f.reserve - f.longueur) + '%';
+  $('i-longueur').textContent = f.longueur + ' / ' + (f.capacite - f.reserve);
+  $('i-echanges').textContent = f.nb_visibles + ' / ' + f.nb_total;
+
+  $('d-brut').hidden = !f.visible;
+  $('brut').textContent = f.visible;
+  const sortis = (f.hors_fenetre || [])
+    .map(e => 'Utilisateur : ' + e.utilisateur + '\nAssistant : ' + e.assistant).join('\n');
+  $('d-sortis').hidden = !sortis;
+  $('sortis').textContent = sortis;
+}
+
+function signaler(inconnus) {
+  const sous = $('sous');
+  if (inconnus && inconnus.length) {
+    sous.innerHTML = 'Caractères absents de son vocabulaire, ignorés : <b>' + inconnus.join(' ') + '</b>';
+  } else {
+    sous.textContent = presentation;
+  }
+}
+
+/* ---------- Flux : une ligne JSON par morceau ---------- */
+async function diffuser(url, corps, surCaractere) {
+  const reponse = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(corps || {}),
+  });
+  if (!reponse.ok) throw new Error((await reponse.json()).erreur || 'erreur serveur');
+
+  const lecteur = reponse.body.getReader();
+  const decodeur = new TextDecoder();
+  let tampon = '', final = null;
+  for (;;) {
+    const { value, done } = await lecteur.read();
+    if (done) break;
+    tampon += decodeur.decode(value, { stream: true });
+    const lignes = tampon.split('\n');
+    tampon = lignes.pop();
+    for (const ligne of lignes) {
+      if (!ligne) continue;
+      const e = JSON.parse(ligne);
+      if (e.caractere) surCaractere(e.caractere);
+      if (e.fin) final = e;
+    }
+  }
+  return final || {};
+}
+
+/* ---------- Actions sous la dernière réponse ---------- */
+function ajouterActions(tour, propos, reponseRatee) {
+  document.querySelectorAll('.actions').forEach(a => a.remove());
+
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+  actions.innerHTML = `
+    <button class="icone" data-role="copier" title="Copier">⧉</button>
+    <button class="icone" data-role="refaire" title="Régénérer">↻</button>
+    <button class="icone" data-role="mauvais" title="Mauvaise réponse">✗ Mauvaise réponse</button>`;
+  tour.append(actions);
+
+  actions.querySelector('[data-role="copier"]').onclick = async (e) => {
+    await navigator.clipboard.writeText(propos.textContent);
+    e.currentTarget.textContent = '✓';
+    setTimeout(() => { e.currentTarget.textContent = '⧉'; }, 1200);
+  };
+
+  actions.querySelector('[data-role="refaire"]').onclick = async () => {
+    if (occupe) return;
+    occupe = true;
+    propos.textContent = '';
+    propos.classList.add('ecrit');
+    try {
+      const final = await diffuser('/api/regenerer', null, (c) => { propos.textContent += c; versLeBas(); });
+      propos.textContent = final.reponse ?? propos.textContent;
+    } finally {
+      propos.classList.remove('ecrit');
+      occupe = false;
+    }
+  };
+
+  actions.querySelector('[data-role="mauvais"]').onclick = (e) => {
+    e.currentTarget.classList.add('actif');
+    ouvrirCorrection(tour, propos, reponseRatee);
+  };
+}
+
+function ouvrirCorrection(tour, propos, reponseRatee) {
+  if (tour.querySelector('.correction')) return;
+
+  const boite = document.createElement('div');
+  boite.className = 'correction';
+  boite.innerHTML = `
+    <p>Quelle réponse attendiez-vous ? Elle deviendra la bonne, l'autre la mauvaise.</p>
+    <textarea aria-label="Réponse attendue"></textarea>
+    <div class="rangee">
+      <button type="button" class="bouton plein" data-role="garder">Enregistrer</button>
+      <button type="button" class="bouton" data-role="autre">Qu'il essaie autrement</button>
+      <button type="button" class="bouton" data-role="annuler">Annuler</button>
+      <span class="mot" data-role="mot"></span>
+    </div>`;
+  tour.append(boite);
+
+  const zone = boite.querySelector('textarea');
+  const mot = boite.querySelector('[data-role="mot"]');
+  const bouton = (r) => boite.querySelector(`[data-role="${r}"]`);
+  zone.focus();
+  versLeBas();
+
+  bouton('annuler').onclick = () => {
+    boite.remove();
+    tour.querySelector('[data-role="mauvais"]')?.classList.remove('actif');
+  };
+
+  bouton('autre').onclick = async () => {
+    if (occupe) return;
+    occupe = true;
+    bouton('autre').disabled = bouton('garder').disabled = true;
+    zone.value = '';
+    mot.textContent = 'il écrit…';
+    try {
+      const final = await diffuser('/api/regenerer', null, (c) => { zone.value += c; });
+      zone.value = final.reponse ?? zone.value;
+      mot.textContent = 'Modifiez si besoin, puis enregistrez.';
+    } catch (err) {
+      mot.textContent = err.message;
+    } finally {
+      occupe = false;
+      bouton('autre').disabled = bouton('garder').disabled = false;
+      zone.focus();
+    }
+  };
+
+  bouton('garder').onclick = async () => {
+    const choisie = zone.value.trim();
+    if (!choisie) { zone.focus(); return; }
+    bouton('garder').disabled = true;
+    const reponse = await fetch('/api/preference', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ choisie }),
+    });
+    const d = await reponse.json();
+    if (!d.enregistree) {
+      mot.textContent = 'Identique à sa réponse : rien à apprendre.';
+      bouton('garder').disabled = false;
+      return;
+    }
+    propos.textContent = d.memoire.at(-1).assistant;
+    boite.remove();
+    tour.querySelector('.actions')?.remove();
+
+    const trace = document.createElement('p');
+    trace.className = 'trace';
+    trace.textContent = '✓ Corrigé. « ' + reponseRatee.slice(0, 44)
+      + (reponseRatee.length > 44 ? '…' : '') + ' » servira d\'exemple à éviter.';
+    tour.append(trace);
+
+    $('i-prefs').textContent = d.preferences;
+    majFenetre(d.fenetre);
+    signaler(d.inconnus);
+    versLeBas();
+  };
+}
+
+/* ---------- Envoi ---------- */
+async function envoyer(texte) {
+  if (occupe || !texte) return;
+  occupe = true;
+  $('envoyer').disabled = true;
+  $('accueil')?.remove();
+  signaler(null);
+
+  tourDeVous(texte);
+  const { tour, propos } = tourDuModele();
+  propos.classList.add('ecrit');
+
+  try {
+    const final = await diffuser('/api/message', { message: texte }, (c) => {
+      propos.textContent += c;
+      versLeBas();
+    });
+    propos.classList.remove('ecrit');
+    afficherSources(tour, final.sources);
+    if (final.fenetre) majFenetre(final.fenetre);
+    if (final.preferences !== undefined) $('i-prefs').textContent = final.preferences;
+    signaler(final.inconnus);
+    // Que la dernière réponse peut être corrigée, le serveur garde que son contexte
+    ajouterActions(tour, propos, final.reponse || propos.textContent);
+  } catch (e) {
+    propos.classList.remove('ecrit');
+    propos.textContent = '(' + e.message + ')';
+  } finally {
+    occupe = false;
+    $('envoyer').disabled = false;
+    $('message').focus();
+  }
+}
+
+/* ---------- Composeur ---------- */
+const champ = $('message');
+function redimensionner() {
+  champ.style.height = 'auto';
+  champ.style.height = Math.min(champ.scrollHeight, 160) + 'px';
+}
+champ.addEventListener('input', redimensionner);
+champ.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    $('formulaire').requestSubmit();
+  }
+});
+$('formulaire').onsubmit = (e) => {
+  e.preventDefault();
+  const texte = champ.value.trim();
+  champ.value = '';
+  redimensionner();
+  envoyer(texte);
+};
+document.querySelectorAll('.piste').forEach(p => {
+  p.onclick = () => envoyer(p.textContent);
+});
+
+$('neuf').onclick = async () => {
+  const d = await (await fetch('/api/oublier', { method: 'POST' })).json();
+  majFenetre(d.fenetre);
+  colonne.innerHTML = '';
+  const accueil = document.createElement('div');
+  accueil.className = 'accueil';
+  accueil.id = 'accueil';
+  accueil.innerHTML = `<h2>Mémoire vidée</h2>
+    <p>Il ne sait plus rien de vous. Redites-lui votre prénom pour vérifier.</p>
+    <div class="pistes"><button class="piste">Je m'appelle Théo</button>
+    <button class="piste">Comment je m'appelle ?</button></div>`;
+  colonne.append(accueil);
+  accueil.querySelectorAll('.piste').forEach(p => { p.onclick = () => envoyer(p.textContent); });
+  basculer(false);
+  champ.focus();
+};
+
+/* ---------- Démarrage ---------- */
+(async function demarrer() {
+  const etat = await (await fetch('/api/etat')).json();
+  $('i-modele').textContent = etat.modele.replace('checkpoint_', '').replace('.pt', '');
+  $('i-device').textContent = etat.device;
+  $('i-vocab').textContent = etat.vocabulaire + ' ' + (etat.decoupage || 'caractères');
+  $('i-passages').textContent = etat.passages ? etat.passages.toLocaleString('fr-FR') + ' articles' : 'non indexée';
+  $('i-prefs').textContent = etat.preferences;
+  presentation = 'Modèle de ' + etat.parametres + ' M de paramètres, entraîné sur des romans français et Wikipédia. '
+    + 'Il se trompe souvent — c\'est le but.';
+  signaler(null);
+  $('etiquette').textContent = etat.modele;
+  majFenetre(etat.fenetre);
+  const pitch = $('pitch');
+  if (pitch) {
+    const unite = etat.decoupage === 'sous-mots' ? 'morceau de mot' : 'caractère';
+    pitch.textContent = 'Il écrit ' + unite + ' par ' + unite + ' et retient les '
+      + etat.fenetre.capacite + ' derniers. Avant une question de culture, il lit '
+      + 'Wikipédia. Quand une réponse est ratée, corrigez-la : elle servira à l\'entraîner.';
+  }
+
+  if (etat.memoire.length) {
+    $('accueil')?.remove();
+    for (const echange of etat.memoire) {
+      tourDeVous(echange.utilisateur);
+      tourDuModele(echange.assistant, echange.sources);
+    }
+  }
+  champ.focus();
+})();
+</script>
+</body>
+</html>

@@ -1,7 +1,8 @@
 import requests, re, time
+import chemins
 
-# Numéros = Identifiants Project Gutenberg des livres à télécharger.
-# Le nom des livres est là que pour l'affichage pendant le téléchargement. (Pas nécessaire de le mettre)
+# Numéros = identifiants Project Gutenberg des livres à télécharger.
+# Le nom est là que pour l'affichage pendant le téléchargement.
 LIVRES = {
     17489:"Miserables_1", 17493:"Miserables_2", 17494:"Miserables_3",
     17518:"Miserables_4", 17519:"Miserables_5",
@@ -15,18 +16,14 @@ LIVRES = {
     32854:"ArseneLupin", 2650:"CoteDeChezSwann",
 }
 
+# On coupe l'en-tête et la licence Gutenberg pour garder que le texte du livre
 def nettoyer(txt):
-    # Les fichiers Gutenberg entourent le roman de deux marqueurs
-    # "*** START OF ... ***" et "*** END OF ... ***" qui délimitent l'en-tête et la licence. 
-    # On coupe avant et après pour ne garder que le texte du livre.
     m = re.search(r"\*\*\*\s*START OF (THIS|THE) PROJECT GUTENBERG EBOOK.*?\*\*\*", txt, re.S|re.I)
     if m: txt = txt[m.end():]
     m = re.search(r"\*\*\*\s*END OF (THIS|THE) PROJECT GUTENBERG EBOOK.*?\*\*\*", txt, re.S|re.I)
     if m: txt = txt[:m.start()]
     return txt.strip()
 
-# Téléchargement livre par livre. Un livre qui échoue au téléchargement (réseau coupé, page déplacée),
-# ne doit pas interrompre la boucle : on signale et on passe au suivant.
 morceaux = []
 for num, nom in LIVRES.items():
     try:
@@ -37,12 +34,10 @@ for num, nom in LIVRES.items():
         print(f"OK  {nom:22} {len(texte):>9,} caractères")
     except Exception as e:
         print(f"ÉCHEC {nom}: {e}")
-    time.sleep(0.5)  # pause entre deux requêtes pour ne pas surcharger le serveur
+    time.sleep(0.5)  # pause entre deux requêtes pour pas surcharger le serveur
 
-# Tous les livres sont collés dans un seul fichier, séparés par une ligne vide.
-# C'est ce fichier que prepare.py transformera en données d'entraînement.
 corpus = "\n\n".join(morceaux)
-with open("corpus_fr.txt", "w", encoding="utf-8") as f:
+with open(chemins.CORPUS_ROMANS, "w", encoding="utf-8") as f:
     f.write(corpus)
 
 print(f"\nTotal : {len(corpus):,} caractères, {len(corpus)/1_000_000:.1f} Mo")

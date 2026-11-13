@@ -5,20 +5,41 @@ venv/
 
 # Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# Données générées (regénérables via corpus.py / prepare.py)
-corpus_fr.txt
-train.bin
-val.bin
-meta.pkl
+# Données et modèles : tout se régénère en relançant le pipeline, et ça pèse
+# environ 14 Go. Voir chemins.py pour savoir quoi produit quoi. La
+# conversation en cours (donnees/memoire.json) reste aussi hors du dépôt :
+# elle est personnelle.
+donnees/*
+modeles/
 
-# Modèle entraîné
-checkpoint.pt
+# Exception : les préférences annotées à la main ne se régénèrent pas, elles
+# représentent un travail d'annotation.
+!donnees/preferences.jsonl
+
+# Poids enregistrés ailleurs que dans modeles/ (copies, essais) : 200 Mo
+# chacun, bien trop lourds pour git.
 *.pt
+*.pth
+
+# Secrets : identifiants Reddit (collecte_reddit.py), jeton Hugging Face
+.env
+.env.*
+
+# Journaux d'entraînement redirigés dans un fichier
+*.log
+nohup.out
 
 # OS / éditeurs
 .DS_Store
+Thumbs.db
+desktop.ini
 .vscode/
 .idea/
+.claude/settings.local.json
