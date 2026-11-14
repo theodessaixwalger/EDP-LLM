@@ -259,11 +259,11 @@ class Recherche:
                 resultats.append((score + POIDS_IMPORTANCE * float(self.importance[i]), score, int(i)))
         return [(score, i) for _, score, i in sorted(resultats, reverse=True)[:n]]
 
-    def documents_pour(self, message, n=2):
+    def documents_pour(self, message, n=2, seuil=SEUIL):
         if not est_question_de_culture(message):
             return []
         # Le meilleur passage en dernier, juste avant la question : c'est celui que le modèle recopie le plus
-        return [self.passage(i) for _, i in self.chercher(message, n, seuil=SEUIL)][::-1]
+        return [self.passage(i) for _, i in self.chercher(message, n, seuil=seuil)][::-1]
 
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8')

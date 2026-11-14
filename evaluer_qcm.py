@@ -12,11 +12,12 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from model import MonLLM, bloquer_repetitions
-from recherche import Recherche, ligne_document, mots, normaliser
+from recherche import SEUIL, Recherche, ligne_document, mots, normaliser
 from tokeniseur import decoupage
 import chemins
 
 # python evaluer_qcm.py --checkpoint modeles/checkpoint_chat.pt modeles/checkpoint_dpo.pt
+# python evaluer_qcm.py --comparer resultats/a.json resultats/b.json  (tests appariés entre deux runs)
 QCM = os.path.join(chemins.DONNEES, 'qcm', 'qcm_v2.jsonl')
 RESULTATS = 'resultats'
 UTILISATEUR = "Utilisateur : "
@@ -38,9 +39,19 @@ def arguments():
     parseur.add_argument('--limite', type=int, default=None)
     parseur.add_argument('--sans-documents', action='store_true',
                          help="n'évalue que la condition sans documents (pas de recherche)")
+    parseur.add_argument('--k', type=int, default=2, help="nombre de documents injectés (2 dans chat.py)")
+    parseur.add_argument('--seuil', type=float, default=SEUIL)
+    parseur.add_argument('--sans-seuil', action='store_true', help="toujours injecter k documents")
+    parseur.add_argument('--sans-generation', action='store_true', help="vraisemblance seulement")
     parseur.add_argument('--graine', type=int, default=0)
     parseur.add_argument('--qcm', default=QCM)
-    return parseur.parse_args()
+    parseur.add_argument('--etiquette', default='', help="ajoutée au nom du fichier de résultats")
+    parseur.add_argument('--comparer', nargs=2, metavar=('REFERENCE', 'AUTRE'),
+                         help="compare deux fichiers de résultats question par question, sans rien relancer")
+    args = parseur.parse_args()
+    if args.sans_seuil:
+        args.seuil = 0.0
+    return args
 
 # --- Reconnaître un choix dans un texte ---
 DETERMINANT = re.compile(r"^(le|la|les|l|un|une|des|du|de|d|au|aux|a|en|par|dans|sur|celui de|celle de|ceux de) ")
@@ -60,6 +71,19 @@ def cites(texte, choix):
     plat, ensemble = f" {cle(texte)} ", set(mots(texte))
     return [i for i, (c, propres) in enumerate(zip(choix, mots_propres(choix)))
             if f" {cle(c)} " in plat or propres & ensemble]
+
+# Réponse au format « B) Lyon. Justification... » : on ne lit que ce qui suit la lettre, la justification
+# peut citer un autre choix. Sans lettre on lit toute la réponse
+FORMAT_LETTRE = re.compile(r"^\s*([ABCD])\)\s*(.*?)(?:\.(?:\s|$)|$)", re.S)
+
+def extraire(reponse, choix):
+    lettre = FORMAT_LETTRE.match(reponse)
+    trouves = cites(lettre.group(2) if lettre else reponse, choix)
+    if len(trouves) == 1:
+        return trouves[0]
+    if lettre and not trouves:
+        return 'ABCD'.index(lettre.group(1))
+    return None
 
 def figure_dans(texte, choix, i):
     propres = mots_propres(choix)[i]
@@ -107,11 +131,11 @@ def score_moyen(valeurs, graine):
             'ic95': list(bootstrap(valeurs, graine)), 'n': len(valeurs)}
 
 # --- Recherche (ne dépend pas du modèle, faite une seule fois) ---
-def rechercher(questions):
+def rechercher(questions, k, seuil):
     recherche = Recherche()
     trouves = []
     for q in questions:
-        documents = recherche.documents_pour(q['question'])
+        documents = recherche.documents_pour(q['question'], n=k, seuil=seuil)
         classement = [recherche.passage(i)[0] for _, i in recherche.chercher(q['question'], n=max(K_RAPPEL))]
         texte = ' '.join(p for _, p in documents)
         trouves.append({
@@ -196,17 +220,17 @@ def evaluer(fichier, questions, conditions, trouves, args):
         for condition in conditions:
             documents = trouves[n]['documents'] if condition == 'avec_documents' else []
             sommes, normalisees = ev.vraisemblance(ev.contexte(q['question'], documents), q['choix'])
-            torch.manual_seed(args.graine * 1_000_003 + int(q['id'].split('_')[1]))
-            reponses = ev.generer(ev.contexte(avec_les_choix(q), documents), args.n_tirages)
-            extraits = []
-            for r in reponses:
-                c = cites(r, q['choix'])
-                extraits.append(c[0] if len(c) == 1 else None)
             ligne[condition] = {
                 'somme': sommes, 'normalisee': normalisees,
                 'choix_somme': int(np.argmax(sommes)), 'choix_normalisee': int(np.argmax(normalisees)),
-                'reponses': reponses, 'extraits': extraits, 'vote': vote(extraits),
+                'tokens_documents': len(ev.tok.encoder(ev.contexte('', documents))) - len(ev.tok.encoder(ev.contexte('', []))),
             }
+            if args.sans_generation:
+                continue
+            torch.manual_seed(args.graine * 1_000_003 + int(q['id'].split('_')[1]))
+            reponses = ev.generer(ev.contexte(avec_les_choix(q), documents), args.n_tirages)
+            extraits = [extraire(r, q['choix']) for r in reponses]
+            ligne[condition].update({'reponses': reponses, 'extraits': extraits, 'vote': vote(extraits)})
         details.append(ligne)
         if (n + 1) % 25 == 0:
             ecoule = time.time() - debut
@@ -221,27 +245,31 @@ METRIQUES = ('vraisemblance_normalisee', 'vraisemblance_somme', 'generation_moye
 
 def par_question(q, d):
     juste = q['reponse']
-    return {
+    valeurs = {
         'vraisemblance_normalisee': d['choix_normalisee'] == juste,
         'vraisemblance_somme': d['choix_somme'] == juste,
-        'generation_moyenne': float(np.mean([e == juste for e in d['extraits']])),
-        'generation_vote': d['vote'] == juste,
     }
+    if 'extraits' in d:
+        valeurs['generation_moyenne'] = float(np.mean([e == juste for e in d['extraits']]))
+        valeurs['generation_vote'] = d['vote'] == juste
+    return valeurs
 
 def scores(valeurs, graine):
     return {m: (score_moyen([v[m] for v in valeurs], graine) if m == 'generation_moyenne'
-                else score_binaire([v[m] for v in valeurs])) for m in METRIQUES}
+                else score_binaire([v[m] for v in valeurs])) for m in METRIQUES if valeurs and m in valeurs[0]}
 
 def resumer(questions, details, conditions, trouves, graine):
     resume = {}
     for condition in conditions:
         valeurs = [par_question(q, d[condition]) for q, d in zip(questions, details)]
-        extraits = [e for d in details for e in d[condition]['extraits']]
         bloc = {'global': scores(valeurs, graine),
-                'sans_reponse_reconnue': sum(e is None for e in extraits) / len(extraits),
-                'position_citee': {lettre: sum(e == i for e in extraits) / len(extraits)
-                                   for i, lettre in enumerate('ABCD')},
+                'tokens_documents': float(np.mean([d[condition]['tokens_documents'] for d in details])),
                 'par_categorie': {}, 'par_type': {}}
+        if 'extraits' in details[0][condition]:
+            extraits = [e for d in details for e in d[condition]['extraits']]
+            bloc['sans_reponse_reconnue'] = sum(e is None for e in extraits) / len(extraits)
+            bloc['position_citee'] = {lettre: sum(e == i for e in extraits) / len(extraits)
+                                      for i, lettre in enumerate('ABCD')}
         for champ, cible in (('categorie', 'par_categorie'), ('type', 'par_type')):
             for valeur in sorted({q[champ] for q in questions}):
                 sous = [v for q, v in zip(questions, valeurs) if q[champ] == valeur]
@@ -265,6 +293,8 @@ def comparer(questions, details_a, details_b, condition_a, condition_b, graine):
     b = [par_question(q, d[condition_b]) for q, d in zip(questions, details_b)]
     sortie = {}
     for m in METRIQUES:
+        if m not in a[0] or m not in b[0]:
+            continue
         va, vb = [x[m] for x in a], [x[m] for x in b]
         sortie[m] = bootstrap_apparie(va, vb, graine)
         if m != 'generation_moyenne':
@@ -287,16 +317,19 @@ def afficher(rapport):
           f"(Wilson, bootstrap pour la moyenne des {rapport['n_tirages']} tirages)\n")
     largeur = 31
     for condition in conditions:
+        blocs = [rapport['checkpoints'][c][condition] for c in noms]
         print(f"--- {condition.replace('_', ' ')} ---")
         print(f"  {'':26}" + ''.join(f"{c:>{largeur}}" for c in courts))
         for m in METRIQUES:
-            print(f"  {NOMS[m]:26}" + ''.join(
-                f"{pourcent(rapport['checkpoints'][c][condition]['global'][m]):>{largeur}}" for c in noms))
-        print(f"  {'sans choix reconnu (gén.)':26}" + ''.join(
-            f"{rapport['checkpoints'][c][condition]['sans_reponse_reconnue']:>{largeur}.1%}" for c in noms))
-        print(f"  {'choix cités A/B/C/D (gén.)':26}" + ''.join(
-            f"{' '.join(f'{v:.0%}' for v in rapport['checkpoints'][c][condition]['position_citee'].values()):>{largeur}}"
-            for c in noms))
+            if m in blocs[0]['global']:
+                print(f"  {NOMS[m]:26}" + ''.join(f"{pourcent(b['global'][m]):>{largeur}}" for b in blocs))
+        if 'sans_reponse_reconnue' in blocs[0]:
+            print(f"  {'un seul choix cité (gén.)':26}" + ''.join(
+                f"{1 - b['sans_reponse_reconnue']:>{largeur}.1%}" for b in blocs))
+            print(f"  {'choix cités A/B/C/D (gén.)':26}" + ''.join(
+                f"{' '.join(f'{v:.0%}' for v in b['position_citee'].values()):>{largeur}}" for b in blocs))
+        if condition == 'avec_documents':
+            print(f"  {'tokens de documents':26}" + ''.join(f"{b['tokens_documents']:>{largeur}.0f}" for b in blocs))
         print()
     principal = 'vraisemblance_normalisee'
     for champ in ('par_categorie', 'par_type'):
@@ -312,7 +345,7 @@ def afficher(rapport):
         print()
     if 'avec_documents' in conditions:
         r = rapport['recherche']
-        print("--- recherche (documents injectés comme dans chat.py, k = 2) ---")
+        print(f"--- recherche (k = {rapport['k']}, seuil = {rapport['seuil']}) ---")
         print(f"  rappel@k de l'article source : " + ', '.join(f"@{k} {v:.0%}" for k, v in r['rappel'].items()))
         print(f"  article source injecté        : {r['article_injecte']:.0%}")
         print(f"  bonne réponse dans les docs   : {r['reponse_dans_documents']:.0%}")
@@ -327,24 +360,50 @@ def afficher(rapport):
         print("--- avec documents - sans documents (mêmes questions, test apparié) ---")
         for c, court in zip(noms, courts):
             d = rapport['checkpoints'][c]['documents_vs_sans']
-            for m in METRIQUES:
-                x = d[m]
+            for m, x in d.items():
                 test = f"McNemar p={x['mcnemar']['p']:.3f}" if 'mcnemar' in x else f"bootstrap p={x['p']:.3f}"
                 print(f"  {court:24} {NOMS[m]:26} {x['difference']:+6.1%} [{x['ic95'][0]:+.1%} ; {x['ic95'][1]:+.1%}]  {test}")
         print()
     for paire, comparaison in rapport.get('comparaisons', {}).items():
         print(f"--- {paire} (mêmes questions, test apparié) ---")
         for condition, d in comparaison.items():
-            for m in METRIQUES:
-                x = d[m]
+            for m, x in d.items():
                 test = (f"McNemar p={x['mcnemar']['p']:.3f} ({x['mcnemar']['seul_a']} vs {x['mcnemar']['seul_b']} désaccords)"
                         if 'mcnemar' in x else f"bootstrap p={x['p']:.3f}")
                 print(f"  {condition:15} {NOMS[m]:26} {x['difference']:+6.1%} [{x['ic95'][0]:+.1%} ; {x['ic95'][1]:+.1%}]  {test}")
         print()
 
+# Deux runs déjà faits (autre k, autre modèle...) : on apparie les questions par id et les modèles dans l'ordre
+def comparer_fichiers(chemin_a, chemin_b, graine):
+    a, b = (json.load(open(c, encoding='utf-8')) for c in (chemin_a, chemin_b))
+    with open(a['qcm'], encoding='utf-8') as f:
+        questions = {q['id']: q for q in map(json.loads, f)}
+    modeles_a, modeles_b = list(a['details']), list(b['details'])
+    if len(modeles_a) == 1:
+        modeles_a = modeles_a * len(modeles_b)
+    if len(modeles_b) == 1:
+        modeles_b = modeles_b * len(modeles_a)
+    for nom_a, nom_b in zip(modeles_a, modeles_b):
+        da = {d['id']: d for d in a['details'][nom_a]}
+        db = {d['id']: d for d in b['details'][nom_b]}
+        ids = [i for i in da if i in db]
+        qs = [questions[i] for i in ids]
+        print(f"\n--- {nom_b} ({os.path.basename(chemin_b)}) - {nom_a} ({os.path.basename(chemin_a)}), {len(ids)} questions ---")
+        for condition in [c for c in a['conditions'] if c in b['conditions']]:
+            d = comparer(qs, [da[i] for i in ids], [db[i] for i in ids], condition, condition, graine)
+            for m, x in d.items():
+                sa = np.mean([par_question(q, da[i][condition])[m] for q, i in zip(qs, ids)])
+                test = (f"McNemar p={x['mcnemar']['p']:.3f} ({x['mcnemar']['seul_a']} vs {x['mcnemar']['seul_b']} désaccords)"
+                        if 'mcnemar' in x else f"bootstrap p={x['p']:.3f}")
+                print(f"  {condition:15} {NOMS[m]:26} {sa:6.1%} -> {sa + x['difference']:6.1%}  "
+                      f"{x['difference']:+6.1%} [{x['ic95'][0]:+.1%} ; {x['ic95'][1]:+.1%}]  {test}")
+
 def main():
     args = arguments()
     sys.stdout.reconfigure(encoding='utf-8')
+    if args.comparer:
+        comparer_fichiers(*args.comparer, args.graine)
+        return
     random.seed(args.graine)
     np.random.seed(args.graine)
     with open(args.qcm, encoding='utf-8') as f:
@@ -355,12 +414,13 @@ def main():
 
     trouves = [None] * len(questions)
     if 'avec_documents' in conditions:
-        print("Recherche des documents...")
-        trouves = rechercher(questions)
+        print(f"Recherche des documents (k = {args.k}, seuil = {args.seuil})...")
+        trouves = rechercher(questions, args.k, args.seuil)
 
     rapport = {'date': datetime.datetime.now().isoformat(timespec='seconds'), 'qcm': args.qcm,
-               'nb_questions': len(questions), 'n_tirages': args.n_tirages, 'graine': args.graine,
-               'temperature': TEMPERATURE, 'conditions': conditions, 'checkpoints': {}, 'details': {}}
+               'nb_questions': len(questions), 'n_tirages': 0 if args.sans_generation else args.n_tirages,
+               'graine': args.graine, 'temperature': TEMPERATURE, 'k': args.k, 'seuil': args.seuil,
+               'conditions': conditions, 'checkpoints': {}, 'details': {}}
     tous_details = {}
     for fichier in args.checkpoint:
         print(f"\n{fichier}")
@@ -387,7 +447,8 @@ def main():
 
     afficher(rapport)
     os.makedirs(RESULTATS, exist_ok=True)
-    sortie = os.path.join(RESULTATS, f"qcm_{datetime.datetime.now():%Y%m%d_%H%M%S}.json")
+    etiquette = f"_{args.etiquette}" if args.etiquette else ''
+    sortie = os.path.join(RESULTATS, f"qcm_{datetime.datetime.now():%Y%m%d_%H%M%S}{etiquette}.json")
     with open(sortie, 'w', encoding='utf-8') as f:
         json.dump(rapport, f, ensure_ascii=False, indent=1)
     print(f"Résultats détaillés -> {sortie}")
