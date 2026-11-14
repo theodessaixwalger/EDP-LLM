@@ -390,7 +390,10 @@ def tirer_conversation(paires, dialogues, cote):
 # sans toucher aux 40 000 autres. Elles ont la même part de longue portée que les autres.
 # Désactivé : à 25 %, le modèle apprend le format mais pas à choisir la bonne réponse dans le document,
 # il recopie surtout le premier choix de la liste. QCM v2 avec documents, génération au vote :
-# 45 % -> 24 % avec « B) Lyon. », 27 % avec « Lyon. ». Les modèles sont dans modeles/60M_lecture_*
+# 45 % -> 24 % avec « B) Lyon. », 27 % avec « Lyon. ». Avec « X est né à Lyon. » ça ne baisse plus (45 %)
+# mais ça monte pas non plus, et il recopie plus le résultat des outils (88 % -> 45 %), il répond
+# « Je ne trouve pas la réponse dans ce document. » à « Il est 14 h 54. ». Les modèles sont dans
+# modeles/60M_lecture_*. Pour les questions à choix, choix.py fait mieux sans rien réentraîner
 part_lecture = 0
 lectures = {'train': [], 'val': []}
 if part_lecture:

@@ -17,7 +17,6 @@ PARTS = {'qcm': 0.40, 'courte': 0.30, 'sans_reponse': 0.15, 'plusieurs': 0.15}
 # Un QCM sur huit sans document : le format doit tenir même quand la recherche ne trouve rien
 PART_QCM_SANS_DOCUMENT = 0.125
 PART_DEUX_DOCUMENTS = 0.6
-PART_JUSTIFICATION = 0.5
 MAX_PAR_FAIT = {'region': 0.06, 'departement': 0.08, 'definition': 0.18}
 N_GRAMME = 8
 
@@ -85,13 +84,6 @@ def de(x):
             return contracte + x[len(article):]
     return ("d'" if normaliser(x[:1]) in 'aeiouyh' else 'de ') + x
 
-def phrase_de(texte, position):
-    point = texte.rfind('. ', 0, position)
-    debut = point + 2 if point >= 0 else 0
-    fin = texte.find('. ', position)
-    phrase = texte[debut:fin + 1 if fin >= 0 else len(texte)].strip()
-    return phrase if 30 <= len(phrase) <= 220 else None
-
 # --- Les faits qu'on sait repérer ---
 # Le texte de Wikipédia a perdu ses dates et ses nombres : « un peintre français du » est une réponse coupée
 COUPEE = re.compile(r"\b(de|du|des|la|le|les|à|au|aux|en|et|par|un|une|d'|l')$")
@@ -104,14 +96,14 @@ def faits(titre, texte):
     personne = bool(re.search(r"\bnée?\b", texte[:250]))
     trouves = []
 
-    def ajouter(fait, pool, questions, reponse, courte, position):
+    def ajouter(fait, pool, questions, reponse, courte):
         reponse = reponse.strip(" '’-")
         if len(reponse) < 2 or len(reponse) > 45 or cle(reponse) in cle(x) or cle(x) in cle(reponse):
             return
         if COUPEE.search(reponse):
             return
         trouves.append({'fait': fait, 'pool': pool, 'questions': [maj(q) for q in questions], 'reponse': reponse,
-                        'courte': maj(courte), 'justification': phrase_de(texte, position)})
+                        'courte': maj(courte)})
 
     # Rien entre « né » et « à » qui contienne un autre « à » : « née à et morte à Neuilly » n'est pas une naissance
     m = re.search(r"\bné(e)?(?: [^,.;()à]{0,30}?)? à " + NOM, texte)
@@ -119,56 +111,56 @@ def faits(titre, texte):
         e = m.group(1) or ''
         ajouter('naissance', 'ville', [f"Où est né{e} {x} ?", f"Dans quelle ville est né{e} {x} ?",
                                        f"Quelle est la ville natale {de(x)} ?"],
-                m.group(2), f"{x} est né{e} à {m.group(2)}.", m.start())
+                m.group(2), f"{x} est né{e} à {m.group(2)}.")
     m = re.search(r"\b(mort|morte|décédée?)(?: [^,.;()à]{0,30}?)? à " + NOM, texte)
     if m:
         participe = 'morte' if m.group(1) in ('morte', 'décédée') else 'mort'
         ajouter('deces', 'ville', [f"Où est {participe} {x} ?", f"Dans quelle ville est {participe} {x} ?"],
-                m.group(2), f"{x} est {participe} à {m.group(2)}.", m.start())
+                m.group(2), f"{x} est {participe} à {m.group(2)}.")
     m = re.search(r"département (de la |de l'|d'|du |des |de )" + NOM, texte)
     if m and not personne:
         ajouter('departement', 'departement', [f"Dans quel département se trouve {x} ?",
                                                f"{x} se trouve dans quel département ?"],
-                m.group(2), f"{x} se trouve dans le département {m.group(1)}{m.group(2)}.", m.start())
+                m.group(2), f"{x} se trouve dans le département {m.group(1)}{m.group(2)}.")
     m = re.search(r"en région " + NOM, texte)
     if m and not personne:
         ajouter('region', 'region', [f"Dans quelle région se trouve {x} ?", f"{x} est dans quelle région ?"],
-                m.group(1), f"{x} se trouve en région {m.group(1)}.", m.start())
+                m.group(1), f"{x} se trouve en région {m.group(1)}.")
     m = re.search(r"\b(fondée?|créée?)s? en (\d{4})\b", texte)
     if m:
         participe = m.group(1)
         pronom = 'elle' if participe.endswith('ée') else 'il'
         ajouter('fondation', 'annee', [f"En quelle année {x} a-t-{pronom} été {participe} ?",
                                        f"De quand date la fondation {de(x)} ?"],
-                m.group(2), f"{x} a été {participe} en {m.group(2)}.", m.start())
+                m.group(2), f"{x} a été {participe} en {m.group(2)}.")
     m = re.search(r"\b(sortie?)(?: [^,.;()]{0,25}?)? en (\d{4})\b", texte)
     if m:
         ajouter('sortie', 'annee', [f"En quelle année est {m.group(1)} {x} ?", f"{x} est {m.group(1)} en quelle année ?"],
-                m.group(2), f"{x} est {m.group(1)} en {m.group(2)}.", m.start())
+                m.group(2), f"{x} est {m.group(1)} en {m.group(2)}.")
     m = re.search(r"\b(réalisé|écrit|composé|dessiné|fondé|créé|développé|construit|conçu)e?s? (?:et [a-zé]+ )?par "
                   + NOM, texte)
     if m and not re.match(r"(La|Le|Les|L'|Un|Une)\b", m.group(2)):
         verbe = m.group(1)
         pool = 'entreprise' if verbe == 'développé' else 'personne'
         ajouter(f"auteur_{verbe}", pool, [PAR[verbe].format(x=x)], m.group(2),
-                f"{x} a été {verbe} par {m.group(2)}.", m.start())
+                f"{x} a été {verbe} par {m.group(2)}.")
     m = re.search(r"(?:[Ss]a capitale(?: et (?:sa )?plus grande ville)? est|pour capitale|dont la capitale est) " + NOM, texte)
     if m:
         ajouter('capitale', 'ville', [f"{X} : quelle est sa capitale ?", f"Quelle est la capitale {de(x)} ?"],
-                m.group(1), f"La capitale {de(x)} est {m.group(1)}.", m.start())
+                m.group(1), f"La capitale {de(x)} est {m.group(1)}.")
     m = re.search(r"(?:[Ss]on chef-lieu est|pour chef-lieu|dont le chef-lieu est) " + NOM, texte)
     if m:
         ajouter('chef-lieu', 'ville', [f"Quel est le chef-lieu {de(x)} ?"],
-                m.group(1), f"Le chef-lieu {de(x)} est {m.group(1)}.", m.start())
+                m.group(1), f"Le chef-lieu {de(x)} est {m.group(1)}.")
     m = re.search(r"[Ss]es habitants sont (?:appelés|nommés) (?:les )?([A-ZÉÈ][\w\-]+)", texte)
     if m and not personne:
         ajouter('gentile', 'gentile', [f"Comment appelle-t-on les habitants {de(x)} ?",
                                        f"Quel est le nom des habitants {de(x)} ?"],
-                m.group(1), f"Les habitants {de(x)} sont appelés les {m.group(1)}.", m.start())
+                m.group(1), f"Les habitants {de(x)} sont appelés les {m.group(1)}.")
     m = re.search(r"\b(surnommée?|dite?) (?:le |la |l')?« ([^»]{2,40}?) »", texte)
     if m and not re.match(r"(de|d'|du|des) ", m.group(2)):
         ajouter('surnom', 'surnom', [f"Quel est le surnom {de(x)} ?", f"Comment surnomme-t-on {x} ?"],
-                m.group(2), f"{x} est surnommé{'e' if m.group(1).endswith('e') else ''} « {m.group(2)} ».", m.start())
+                m.group(2), f"{x} est surnommé{'e' if m.group(1).endswith('e') else ''} « {m.group(2)} ».")
     nat = '|'.join(sorted({n for paire in NATIONALITES for n in paire}, key=len, reverse=True))
     metiers = '|'.join(sorted(METIERS_COMPOSES + METIERS, key=len, reverse=True))
     m = re.search(rf"\best (un|une) ({metiers})\b([^,.;()]{{0,60}}?) ({nat})\b", texte)
@@ -176,10 +168,10 @@ def faits(titre, texte):
         article, metier, nationalite = m.group(1), m.group(2), m.group(4)
         feminin = article == 'une'
         ajouter('metier', 'metier_' + article, [f"Quel est le métier {de(x)} ?", f"Que fait {x} dans la vie ?"],
-                metier, f"{x} est {article} {metier}.", m.start())
+                metier, f"{x} est {article} {metier}.")
         ajouter('nationalite', 'nationalite_' + ('f' if feminin else 'm'),
                 [f"Quelle est la nationalité {de(x)} ?", f"{x} est de quelle nationalité ?"],
-                nationalite, f"{x} est {nationalite}.", m.start())
+                nationalite, f"{x} est {nationalite}.")
     m = re.match(r"^[^.]{0,120}? est (un|une) ([^,.;()«»]{3,70}?)(?=[,.;(]| qui | dont | situé| née?\b| fondé| créé| sorti| de \d|$)",
                  texte)
     if m and len(m.group(2).split()) <= 8:
@@ -187,7 +179,7 @@ def faits(titre, texte):
         ajouter('definition', f"definition_{'personne' if personne else 'chose'}_{m.group(1)}",
                 [f"Qu'est-ce que {x} ?", f"C'est quoi {x} ?"] if not re.search(r"\bnée?\b", texte[:200])
                 else [f"Qui est {x} ?", f"Qui était {x} ?"],
-                definition, f"{x} est {definition}.", m.start())
+                definition, f"{x} est {definition}.")
     return trouves
 
 # --- Distracteurs du même genre ---
@@ -312,11 +304,10 @@ def main():
             choix = faux[:p] + [fait['reponse']] + faux[p:]
             exemple.update(choix=choix, reponse_juste=p)
             message = avec_les_choix({'question': question, 'choix': choix})
-            # Le texte du choix d'abord, recopié du document. Avec « B) Lyon. » le modèle devait choisir la lettre
-            # avant d'avoir lu, il la tirait au hasard (22 % de lettres justes) et ne recopiait plus le document
-            reponse = f"{maj(fait['reponse'].rstrip('.'))}."
-            if documents and fait['justification'] and random.random() < PART_JUSTIFICATION:
-                reponse += ' ' + fait['justification']
+            # La phrase qui reprend la tournure du document (« X est né à Lyon. ») : arrivé à « né à », le modèle
+            # n'a qu'à recopier ce qui suit dans le document. Avec « B) Lyon. » ou « Lyon. » il devait choisir
+            # avant d'avoir lu, il prenait la lettre au hasard ou le premier choix de la liste
+            reponse = fait['courte']
         else:
             message = question
             if type_ != 'sans_reponse':
