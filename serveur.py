@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import torch
 import torch.nn.functional as F
+from choix import repondre as repondre_par_choix, trouver_choix
 from model import MonLLM, bloquer_repetitions
 from outils import utiliser as utiliser_outil
 from recherche import Recherche, ligne_document
@@ -123,6 +124,10 @@ def flux_reponse(contexte, chaleur):
         idx = torch.cat((idx, suivant.view(1, 1)), dim=1)
         yield tok.morceaux[suivant.item()]
 
+# Le calcul se fait au premier next(), donc sous le verrou de diffuser()
+def flux_choix(contexte, choix, documents):
+    yield repondre_par_choix(modele, tok, contexte, choix, documents)
+
 # --- Serveur ---
 class Interface(BaseHTTPRequestHandler):
     def log_message(self, *arguments):
@@ -184,14 +189,14 @@ class Interface(BaseHTTPRequestHandler):
         else:
             self.repondre_json({'erreur': 'inconnu'}, 404)
 
-    def diffuser(self, contexte, chaleur):
+    def diffuser(self, flux):
         self.send_response(200)
         self.send_header('Content-Type', 'application/x-ndjson; charset=utf-8')
         self.send_header('Cache-Control', 'no-store')
         self.end_headers()
         morceaux = []
         with verrou:
-            for morceau in flux_reponse(contexte, chaleur):
+            for morceau in flux:
                 morceaux.append(morceau)
                 self.ligne({'caractere': morceau})
         return ''.join(morceaux)
@@ -203,12 +208,19 @@ class Interface(BaseHTTPRequestHandler):
             return
 
         question = UTILISATEUR + message + '\n' + ASSISTANT
-        documents, sources = chercher_documents(message)
+        # Question à choix : on cherche avec la question seule et on prend le choix le plus probable
+        qcm = trouver_choix(message)
+        documents, sources = chercher_documents(qcm[0] if qcm else message)
         fenetre = etat_fenetre(question, documents)
         contexte = fenetre['visible']
+        if qcm:
+            sans_la_liste = contexte[:len(contexte) - len(question)] + UTILISATEUR + qcm[0] + '\n' + ASSISTANT
+            flux = flux_choix(sans_la_liste, qcm[1], documents)
+        else:
+            flux = flux_reponse(contexte, temperature)
 
         try:
-            reponse = self.diffuser(contexte, temperature)
+            reponse = self.diffuser(flux)
         except (BrokenPipeError, ConnectionResetError):
             return
 
@@ -227,7 +239,7 @@ class Interface(BaseHTTPRequestHandler):
             self.repondre_json({'erreur': 'rien à régénérer'}, 400)
             return
         try:
-            proposition = self.diffuser(dernier['contexte'], temperature_seconde_chance)
+            proposition = self.diffuser(flux_reponse(dernier['contexte'], temperature_seconde_chance))
         except (BrokenPipeError, ConnectionResetError):
             return
         self.ligne({'fin': True, 'reponse': proposition})

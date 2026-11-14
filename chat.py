@@ -2,6 +2,7 @@ import json
 import os
 import torch
 import torch.nn.functional as F
+from choix import repondre as repondre_par_choix, trouver_choix
 from model import MonLLM, bloquer_repetitions
 from outils import utiliser as utiliser_outil
 from recherche import Recherche, ligne_document
@@ -145,12 +146,19 @@ while True:
         continue
 
     question = UTILISATEUR + message + '\n' + ASSISTANT
-    documents, sources = chercher_documents(message)
+    # Question à choix : on cherche avec la question seule et on prend le choix le plus probable
+    qcm = trouver_choix(message)
+    documents, sources = chercher_documents(qcm[0] if qcm else message)
     historique, _ = historique_visible(memoire, taille_contexte - longueur_max_reponse
                                        - longueur(documents + question))
     print("IA  > ", end='', flush=True)
     dernier_contexte = historique + documents + question
-    reponse = dernière_reponse = repondre(dernier_contexte)
+    if qcm:
+        sans_la_liste = historique + documents + UTILISATEUR + qcm[0] + '\n' + ASSISTANT
+        reponse = dernière_reponse = repondre_par_choix(modele, tok, sans_la_liste, qcm[1], documents)
+        print(reponse)
+    else:
+        reponse = dernière_reponse = repondre(dernier_contexte)
     if sources:
         print(f"      (sources : {', '.join(sources)})")
 

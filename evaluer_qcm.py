@@ -11,6 +11,7 @@ import time
 import numpy as np
 import torch
 import torch.nn.functional as F
+from choix import vraisemblance as choix_vraisemblance
 from model import MonLLM, bloquer_repetitions
 from recherche import SEUIL, Recherche, ligne_document, mots, normaliser
 from tokeniseur import decoupage
@@ -170,22 +171,8 @@ class Evaluateur:
 
     @torch.no_grad()
     def vraisemblance(self, contexte, choix):
-        debut = self.tok.encoder(contexte)
-        suites = [self.tok.encoder(self.propre(c) + '\n') for c in choix]
-        sequences = [(debut + s)[-(self.fenetre + 1):] for s in suites]
-        longueur = max(map(len, sequences))
-        entree = torch.full((len(choix), longueur - 1), self.tok.saut_de_ligne, dtype=torch.long, device=device)
-        for i, s in enumerate(sequences):
-            entree[i, :len(s) - 1] = torch.tensor(s[:-1], device=device)
-        log_probas = torch.log_softmax(self.modele(entree)[0], dim=-1)
-        sommes = []
-        for i, (s, suite) in enumerate(zip(sequences, suites)):
-            positions = torch.arange(len(s) - 1 - len(suite), len(s) - 1, device=device)
-            cibles = torch.tensor(s[-len(suite):], device=device)
-            sommes.append(log_probas[i, positions, cibles].sum().item())
-        # La normalisation se fait par caractère comme dans evaluer_chat.py : ça ne dépend pas du découpage
-        normalisees = [v / len(self.propre(c) + '\n') for v, c in zip(sommes, choix)]
-        return sommes, normalisees
+        # Le même calcul que le chatbot quand on lui pose une question à choix
+        return choix_vraisemblance(self.modele, self.tok, contexte, [self.propre(c) for c in choix])
 
     @torch.no_grad()
     def generer(self, contexte, n):
