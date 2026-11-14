@@ -23,6 +23,9 @@ modeles/
 # représentent un travail d'annotation.
 !donnees/preferences.jsonl
 
+# Pareil pour le QCM d'évaluation, écrit à la main à partir d'articles Wikipédia.
+!donnees/qcm/
+
 # Poids enregistrés ailleurs que dans modeles/ (copies, essais) : 200 Mo
 # chacun, bien trop lourds pour git.
 *.pt
