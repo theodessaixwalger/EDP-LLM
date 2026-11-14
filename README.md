@@ -48,6 +48,12 @@ EDP-LLM/
 ├── preferences_auto.py   générer des paires sur les erreurs connues
 ├── dpo.py                entraînement par préférences
 ├── evaluer_chat.py       mesurer le chatbot
+├── evaluer_qcm.py        QCM à 4 choix, avec intervalles de confiance et tests appariés
+├── choix.py              questions à choix : prendre le choix le plus probable
+│
+│   Base marketing
+├── recherche_marketing.py  index marketing et choix de l'index (general, marketing, auto)
+├── collecte/marketing_wikipedia.py, marketing_web.py, mmlu_marketing_fr.py
 │
 │   Interface web
 ├── serveur.py            héberge le modèle
@@ -60,7 +66,7 @@ EDP-LLM/
 
 Les scripts se lancent **depuis la racine du projet**, y compris ceux de `collecte/` (`python collecte/collecte_rss.py`). Aucun nom de fichier n'est écrit en dur : tout passe par [chemins.py](chemins.py), le seul fichier à ouvrir pour savoir ce qui produit quoi.
 
-`donnees/` et `modeles/` (environ 14 Go) ne sont pas versionnés : tout s'y régénère en relançant le pipeline. Seul `donnees/preferences.jsonl` est suivi par git, parce que des annotations faites à la main ne se régénèrent pas.
+`donnees/` et `modeles/` (environ 14 Go, plus ~6 Go pour la base marketing) ne sont pas versionnés : tout s'y régénère en relançant le pipeline. Seuls sont suivis par git ce qui a été écrit à la main et ne se régénère pas : `donnees/preferences.jsonl`, les QCM de `donnees/qcm/` et les fiches de `donnees/marketing/fiches/`.
 
 ## Étape 1 — Modèle de langage
 
@@ -277,6 +283,56 @@ Assistant : 17 × 23 = 391.
 - **La calculatrice** comprend les nombres en lettres (« quatre-vingt-dix-sept », « deux mille cinq cents »), les quatre opérations, les puissances et les pourcentages. Elle n'utilise jamais `eval()` : l'expression est analysée par `ast` et seuls les nombres et les opérations passent, ce qui rend inoffensif un message comme `__import__('os')`. Elle ne se déclenche pas sur « la guerre de 1914-1918 » ni sur « le plus grand océan ».
 - **L'horloge** répond à « Quel jour sommes-nous ? » ou « Quelle heure est-il ? », mais pas à « En quelle année a eu lieu la Révolution ? » ni à « À quelle heure ouvre le Louvre ? ».
 - **Apprendre à s'en servir.** Le modèle savait déjà recopier un document, mais pas parfaitement : 21 fois sur 30, avec « 12 + 84. » pour « 12 × 7 = 84. » et « Je suis le mardi 27 octobre » pour la date. Une question sur cinq parmi celles à document est donc maintenant un calcul ou une date, avec le résultat de l'outil lui-même : **30 fois sur 30** ensuite, et 90 % sur 40 calculs et dates tirés au hasard (`evaluer_chat.py`).
+
+## Base documentaire marketing
+
+Sans documents, le modèle est au niveau du hasard au QCM v2 : tout ce qu'il sait, il le lit. Pour en faire un assistant marketing (tous secteurs) sans le réentraîner, on lui donne donc une bibliothèque marketing à lire, à côté de Wikipédia.
+
+```bash
+python collecte/marketing_wikipedia.py --completer --ecrire   # articles Wikipédia choisis par catégories
+python collecte/marketing_web.py --echantillon 150000         # régler le seuil sur un échantillon
+python collecte/marketing_web.py                              # pages web (reprend après une coupure)
+python recherche_marketing.py                                 # index marketing
+python recherche_marketing.py "Qu'est-ce qu'un tunnel de conversion ?"   # ce que trouve chaque mode
+python chat.py --recherche auto                               # general, marketing ou auto (par défaut)
+python serveur.py --recherche auto
+```
+
+| Étape | Durée | Place sur le disque |
+|---|---|---|
+| Wikipédia marketing (tables SQL, arbre des catégories, articles) | ~10 min | 1,5 Go de tables + 1,1 Go de cache, 15 Mo d'articles |
+| Échantillon web (150 000 pages) | 2 min 20 | 205 Mo |
+| Pages web (45,5 millions de pages lues en flux, ~66 Go téléchargés) | 3 h 07 | 1,1 Go de pages + 205 Mo de signatures |
+| Index marketing | 7 min 30 | 3,0 Go (dont 2,3 Go de texte) |
+
+- **Wikipédia par catégories** ([collecte/marketing_wikipedia.py](collecte/marketing_wikipedia.py)). Le Wikipédia de Hugging Face n'a pas les catégories : elles viennent des tables SQL `page`, `categorylinks` et `linktarget` de [dumps.wikimedia.org](https://dumps.wikimedia.org/frwiki/latest/), lues en flux (depuis 2025, `categorylinks` ne donne plus le nom de la catégorie mais un numéro dans `linktarget`). On descend jusqu'à trois niveaux sous 18 catégories racines (Marketing, Publicité, Vente, Commerce en ligne, Référencement…), sans jamais repasser par une catégorie déjà vue. Certaines branches dérivent : sous « Communication », 27 000 articles de littérature, de médias ou de linguistique ; sous « Marque », 2 000 fiches de marques ; sous « Comportement du consommateur », la cuisine de rue. Elles sont coupées à la main (`EXCLUSIONS`), avec les biographies, les homonymies, les listes, les œuvres et les articles de moins de 1 500 caractères. Il reste 1 953 articles de 208 catégories.
+- **Pages web** ([collecte/marketing_web.py](collecte/marketing_web.py)) : [FineWeb-2](https://huggingface.co/datasets/HuggingFaceFW/fineweb-2), configuration `fra_Latn`, licence ODC-By 1.0. Une page est gardée si elle a au moins 5 points de mots-clés marketing pondérés pour 100 mots, avec au moins 4 mots-clés différents (« ROI » et « CAC » cherchés en majuscules, pour éviter le roi et le CAC 40), puis si elle passe les filtres de qualité : longueur, menus, ponctuation, français, spam, listes de produits, casino et crypto, pages légales, offres d'emploi, communiqués boursiers. Le seuil a été réglé sur un échantillon : à 5, environ trois pages gardées sur quatre sont utiles, et deux sur dix juste en dessous l'auraient été. Les doublons sont retirés par empreinte, puis par MinHash écrit à la main (morceaux de 5 mots, seuil 0,8). 0,44 % des pages lues sont gardées, 200 000 au total. Une partie du spam généré automatiquement passe quand même les filtres.
+- **Fiches méthode** (`donnees/marketing/fiches/`) : 41 fiches au même modèle (définition, quand l'utiliser, étapes, exemple, erreurs fréquentes, mots-clés), toutes en `statut: brouillon_ia` jusqu'à leur relecture. Elles sont indexées dans tous les cas, et l'interface affiche leur statut.
+- **L'index** ([recherche_marketing.py](recherche_marketing.py)) découpe tout le texte des documents (pas seulement le début, comme pour l'index général) en passages de ~700 caractères, coupés en fin de phrase et qui se chevauchent, avec le titre du document en tête. Même BM25 que l'index général, mais un index séparé : 2,47 millions de passages, dont 97,6 % viennent du web.
+- **Trois modes de recherche** : `general` (Wikipédia seul, comme avant), `marketing` (la base marketing seule) et `auto` (les deux). En `auto`, chaque index classe ses passages et on additionne 1 / (60 + rang) : la *Reciprocal Rank Fusion* évite de comparer des scores calculés sur deux index différents. Une fiche remonte d'environ trois rangs, et un même document ne donne qu'un passage. Une recherche prend ~35 ms dans l'index général, ~350 ms dans l'index marketing ou en `auto`.
+
+### Ce que la base marketing apporte
+
+`donnees/qcm/qcm_marketing.jsonl` : 150 questions à 4 choix écrites à partir de passages de l'index marketing, comme le QCM v2 (74 tirées de Wikipédia, 49 du web, 27 des fiches), réparties en 7 catégories (stratégie, digital/SEO, réseaux sociaux, email/CRM, publicité, études et mesure, vente/fidélisation), positions équilibrées, aucune ne partageant 8 mots de suite avec les données d'entraînement. En second jeu, le sous-ensemble marketing de MMLU traduit en français ([neuralmagic/mmlu_fr](https://huggingface.co/datasets/neuralmagic/mmlu_fr), 234 questions) : MMLU est sous licence MIT, mais la traduction n'en déclare aucune, elle est donc téléchargée pour évaluer (`collecte/mmlu_marketing_fr.py`) et pas versionnée.
+
+```bash
+python evaluer_qcm.py --checkpoint modeles/checkpoint_dpo.pt --qcm donnees/qcm/qcm_marketing.jsonl --index auto
+```
+
+Modèle DPO, vraisemblance divisée par la longueur (IC à 95 %) :
+
+| | sans documents | index général | index marketing | auto |
+|---|---|---|---|---|
+| QCM marketing (150) | 29,3 % [23–37] | 44,0 % [36–52] | 51,3 % [43–59] | **51,3 %** [43–59] |
+| — en génération (vote sur 5) | 17,3 % | 28,0 % | 30,7 % | 32,0 % |
+| — rappel@1 / @10 de la source | | 40 % / 45 % | 47 % / 65 % | 51 % / 69 % |
+| QCM v2, culture générale (300) | 27,0 % | 57,3 % | | 57,0 % |
+| MMLU marketing (234) | 26,1 % | 26,9 % | 26,1 % | 24,8 % |
+
+- **La base marketing aide.** Par rapport à l'index général, `auto` gagne 7,3 points (IC [+0,7 ; +14,0], McNemar p = 0,052 ; 8,7 points sur la somme, p = 0,024). Le gain vient des questions tirées du web et des fiches, que l'index général ne peut pas trouver : sur les fiches, 15 % → 44 %, sur le web, 35 % → 47 %.
+- **`auto` ne coûte rien à la culture générale** : 57,3 % → 57,0 % au QCM v2 (−0,3 point, IC [−2,0 ; +1,3], p = 1,0), alors qu'un document web remplace parfois le second article de Wikipédia.
+- **Le web est difficile à retrouver.** Les 200 000 pages parlent souvent des mêmes sujets : la page d'où vient la question n'arrive en tête que 24 % des fois. Les fiches, 206 passages au milieu de 2,5 millions, ne sortent en tête que 44 % des fois malgré leur bonus.
+- **Rien sur MMLU.** Ses questions portent sur des notions de manuel américain (« la période de production », « le domaine de la compréhension ») : la réponse n'est dans les documents trouvés que 4 à 5 fois sur 100, et le modèle reste au niveau du hasard.
 
 ## Interface web
 

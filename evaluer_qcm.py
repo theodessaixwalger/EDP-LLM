@@ -13,7 +13,8 @@ import torch
 import torch.nn.functional as F
 from choix import vraisemblance as choix_vraisemblance
 from model import MonLLM, bloquer_repetitions
-from recherche import SEUIL, Recherche, ligne_document, mots, normaliser
+from recherche import SEUIL, ligne_document, mots, normaliser
+from recherche_marketing import MODES, RechercheRoutee
 from tokeniseur import decoupage
 import chemins
 
@@ -42,6 +43,8 @@ def arguments():
                          help="n'évalue que la condition sans documents (pas de recherche)")
     parseur.add_argument('--k', type=int, default=2, help="nombre de documents injectés (2 dans chat.py)")
     parseur.add_argument('--seuil', type=float, default=SEUIL)
+    parseur.add_argument('--index', choices=MODES, default='general',
+                         help="où chercher les documents : general (Wikipédia), marketing ou auto (les deux fusionnés)")
     parseur.add_argument('--sans-seuil', action='store_true', help="toujours injecter k documents")
     parseur.add_argument('--sans-generation', action='store_true', help="vraisemblance seulement")
     parseur.add_argument('--graine', type=int, default=0)
@@ -139,19 +142,29 @@ def score_moyen(valeurs, graine):
             'ic95': list(bootstrap(valeurs, graine)), 'n': len(valeurs)}
 
 # --- Recherche (ne dépend pas du modèle, faite une seule fois) ---
-def rechercher(questions, k, seuil):
-    recherche = Recherche()
+# La source d'une question : la même page web (par son adresse), sinon le même titre d'article
+def est_la_source(q, document):
+    if q.get('url') and document.get('url'):
+        return document['url'] == q['url']
+    return document['titre'] == q['article']
+
+def rechercher(questions, k, seuil, index):
+    recherche = RechercheRoutee(index)
     trouves = []
     for q in questions:
-        documents = recherche.documents_pour(q['question'], n=k, seuil=seuil)
-        classement = [recherche.passage(i)[0] for _, i in recherche.chercher(q['question'], n=max(K_RAPPEL))]
-        texte = ' '.join(p for _, p in documents)
+        debut = time.perf_counter()
+        documents = recherche.trouver(q['question'], n=k, seuil=seuil)
+        duree = time.perf_counter() - debut
+        classement = recherche.classer(q['question'], profondeur=max(K_RAPPEL))[:max(K_RAPPEL)]
+        texte = ' '.join(d['texte'] for d in documents)
         trouves.append({
-            'documents': documents,
-            'titres': [t for t, _ in reversed(documents)],
-            'article_trouve': q['article'] in [t for t, _ in documents],
-            'rappel': {k: q['article'] in classement[:k] for k in K_RAPPEL},
+            'documents': [(d['titre'], d['texte']) for d in documents],
+            'titres': [d['titre'] for d in reversed(documents)],
+            'sources': [d['source'] for d in reversed(documents)],
+            'article_trouve': any(est_la_source(q, d) for d in documents),
+            'rappel': {k: any(est_la_source(q, d) for d in classement[:k]) for k in K_RAPPEL},
             'reponse_dans_documents': figure_dans(texte, q['choix'], q['reponse']),
+            'duree_ms': duree * 1000,
         })
     return trouves
 
@@ -307,7 +320,7 @@ def afficher(rapport):
     courts = [os.path.basename(n) for n in noms]
     conditions = rapport['conditions']
     n = rapport['nb_questions']
-    print(f"\n{'=' * 100}\nQCM v2 : {n} questions, 4 choix (hasard = 25 %), IC à 95 % "
+    print(f"\n{'=' * 100}\n{os.path.basename(rapport['qcm'])} : {n} questions, 4 choix (hasard = 25 %), IC à 95 % "
           f"(Wilson, bootstrap pour la moyenne des {rapport['n_tirages']} tirages)\n")
     largeur = 31
     for condition in conditions:
@@ -339,13 +352,19 @@ def afficher(rapport):
         print()
     if 'avec_documents' in conditions:
         r = rapport['recherche']
-        print(f"--- recherche (k = {rapport['k']}, seuil = {rapport['seuil']}) ---")
+        print(f"--- recherche (index {r.get('index', 'general')}, k = {rapport['k']}, seuil = {rapport['seuil']}, "
+              f"{r.get('duree_ms', 0):.0f} ms par recherche) ---")
+        if r.get('sources_injectees'):
+            print(f"  passages injectés par source  : {r['sources_injectees']}")
         print(f"  rappel@k de l'article source : " + ', '.join(f"@{k} {v:.0%}" for k, v in r['rappel'].items()))
         print(f"  article source injecté        : {r['article_injecte']:.0%}")
         print(f"  bonne réponse dans les docs   : {r['reponse_dans_documents']:.0%}")
         print(f"  précision selon ce qui a été trouvé (vraisemblance / longueur, avec docs | sans docs) :")
         for c, court in zip(noms, courts):
             for cas, v in rapport['checkpoints'][c]['avec_documents']['recherche'].items():
+                # Aucune question dans ce cas (MMLU n'a pas d'article source : jamais trouvé)
+                if not v['avec_documents']:
+                    continue
                 sans = f" | {v['sans_documents'][principal]['score']:6.1%}" if v['sans_documents'] else ''
                 print(f"    {court:24} {cas:28} n={v['avec_documents'][principal]['n']:<4}"
                       f"{v['avec_documents'][principal]['score']:6.1%}{sans}")
@@ -418,7 +437,7 @@ def main():
     trouves = [None] * len(questions)
     if 'avec_documents' in conditions:
         print(f"Recherche des documents (k = {args.k}, seuil = {args.seuil})...")
-        trouves = rechercher(questions, args.k, args.seuil)
+        trouves = rechercher(questions, args.k, args.seuil, args.index)
 
     rapport = {'date': datetime.datetime.now().isoformat(timespec='seconds'), 'qcm': args.qcm,
                'nb_questions': len(questions), 'n_tirages': 0 if args.sans_generation else args.n_tirages,
@@ -436,8 +455,12 @@ def main():
         rapport['recherche'] = {
             'rappel': {k: float(np.mean([t['rappel'][k] for t in trouves])) for k in K_RAPPEL},
             'article_injecte': float(np.mean([t['article_trouve'] for t in trouves])),
+            'index': args.index,
+            'duree_ms': float(np.mean([t['duree_ms'] for t in trouves])),
+            'sources_injectees': dict(collections.Counter(s for t in trouves for s in t['sources'])),
             'reponse_dans_documents': float(np.mean([t['reponse_dans_documents'] for t in trouves])),
-            'par_question': [{'id': q['id'], 'titres': t['titres'], 'article_trouve': t['article_trouve'],
+            'par_question': [{'id': q['id'], 'titres': t['titres'], 'sources': t['sources'],
+                              'article_trouve': t['article_trouve'],
                               'rappel': t['rappel'], 'reponse_dans_documents': t['reponse_dans_documents']}
                              for q, t in zip(questions, trouves)],
         }
@@ -448,12 +471,13 @@ def main():
             for condition in conditions}
         for autre in args.checkpoint[1:]}
 
-    afficher(rapport)
+    # Enregistré avant l'affichage : une erreur d'affichage ne fait pas perdre l'évaluation
     os.makedirs(RESULTATS, exist_ok=True)
     etiquette = f"_{args.etiquette}" if args.etiquette else ''
     sortie = os.path.join(RESULTATS, f"qcm_{datetime.datetime.now():%Y%m%d_%H%M%S}{etiquette}.json")
     with open(sortie, 'w', encoding='utf-8') as f:
         json.dump(rapport, f, ensure_ascii=False, indent=1)
+    afficher(rapport)
     print(f"Résultats détaillés -> {sortie}")
 
 if __name__ == '__main__':
