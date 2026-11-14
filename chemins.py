@@ -31,6 +31,16 @@ RECHERCHE = os.path.join(DONNEES, 'recherche')
 PASSAGES = os.path.join(RECHERCHE, 'passages.jsonl')
 LECTURE = os.path.join(DONNEES, 'lecture.jsonl')
 
+# --- Base documentaire marketing ---
+MARKETING = os.path.join(DONNEES, 'marketing')
+DUMPS_WIKIPEDIA = os.path.join(MARKETING, 'dumps')
+CATEGORIES_MARKETING = os.path.join(MARKETING, 'categories.json')
+MARKETING_WIKIPEDIA = os.path.join(MARKETING, 'wikipedia.jsonl')
+WIKIPEDIA_COMPLEMENT = os.path.join(MARKETING, 'wikipedia_complement.jsonl')
+MARKETING_WEB = os.path.join(MARKETING, 'web.jsonl')
+FICHES = os.path.join(MARKETING, 'fiches')
+RECHERCHE_MARKETING = os.path.join(MARKETING, 'recherche')
+
 # --- Évaluation ---
 QCM = os.path.join(DONNEES, 'qcm', 'qcm_v2.jsonl')
 
