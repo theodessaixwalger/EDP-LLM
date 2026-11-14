@@ -18,7 +18,7 @@ import chemins
 
 # python evaluer_qcm.py --checkpoint modeles/checkpoint_chat.pt modeles/checkpoint_dpo.pt
 # python evaluer_qcm.py --comparer resultats/a.json resultats/b.json  (tests appariés entre deux runs)
-QCM = os.path.join(chemins.DONNEES, 'qcm', 'qcm_v2.jsonl')
+QCM = chemins.QCM
 RESULTATS = 'resultats'
 UTILISATEUR = "Utilisateur : "
 ASSISTANT = "Assistant : "

@@ -29,6 +29,10 @@ MODELE_DPO = os.path.join(MODELES, 'checkpoint_dpo.pt')
 QUESTIONS_DOCUMENTS = os.path.join(DONNEES, 'questions_documents.jsonl')
 RECHERCHE = os.path.join(DONNEES, 'recherche')
 PASSAGES = os.path.join(RECHERCHE, 'passages.jsonl')
+LECTURE = os.path.join(DONNEES, 'lecture.jsonl')
+
+# --- Évaluation ---
+QCM = os.path.join(DONNEES, 'qcm', 'qcm_v2.jsonl')
 
 # --- Discussion ---
 MEMOIRE = os.path.join(DONNEES, 'memoire.json')
