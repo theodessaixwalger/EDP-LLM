@@ -326,5 +326,8 @@ L'étape 2, elle, surapprend vite : une conversation de 4096 morceaux contient ~
 | 2 | [OpenAssistant/oasst1](https://huggingface.co/datasets/OpenAssistant/oasst1) (licence Apache 2.0), conversations françaises validées | 750 échanges |
 | 2 | [French Instruct](https://huggingface.co/datasets/angeluriot/french_instruct) (licence MIT), réponses écrites par des humains | 28 149 échanges |
 | 2 | Conversations générées autour de 6 faits personnels, dont 40 % à longue portée | 44 000 conversations |
+| Marketing | Wikipédia : articles de 208 catégories marketing (catégories lues dans les dumps SQL de [dumps.wikimedia.org](https://dumps.wikimedia.org/frwiki/latest/), texte du Wikipédia de Hugging Face, licence CC BY-SA 4.0) | 1 953 articles, 14 Mo |
+| Marketing | [FineWeb-2](https://huggingface.co/datasets/HuggingFaceFW/fineweb-2), configuration `fra_Latn` (licence ODC-By 1.0, soumise aussi aux conditions d'utilisation de Common Crawl), pages filtrées par mots-clés marketing et qualité | 200 000 pages, 1,1 Go |
+| Marketing | Fiches méthode écrites pour le projet (`donnees/marketing/fiches/`, statut `brouillon_ia` tant qu'elles ne sont pas relues) | 41 fiches |
 
 Les conversations générées utilisent des noms inventés 7 fois sur 10, pour que le modèle apprenne à recopier plutôt qu'à mémoriser, et des variantes de frappe (minuscules, ponctuation oubliée) pour qu'il reconnaisse `je m'appelle léo` autant que `Je m'appelle Léo.`.
