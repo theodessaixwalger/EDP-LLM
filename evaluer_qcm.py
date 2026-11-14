@@ -72,18 +72,25 @@ def cites(texte, choix):
     return [i for i, (c, propres) in enumerate(zip(choix, mots_propres(choix)))
             if f" {cle(c)} " in plat or propres & ensemble]
 
-# Réponse au format « B) Lyon. Justification... » : on ne lit que ce qui suit la lettre, la justification
-# peut citer un autre choix. Sans lettre on lit toute la réponse
+# Réponse au format « B) Lyon. Justification... » ou « Lyon. Justification... » : la justification peut citer
+# un autre choix, donc on lit seulement ce qui suit la lettre, ou la première phrase si c'est exactement un
+# des choix. Sinon on lit toute la réponse (une première phrase qui cite juste un choix au passage ne suffit pas)
 FORMAT_LETTRE = re.compile(r"^\s*([ABCD])\)\s*(.*?)(?:\.(?:\s|$)|$)", re.S)
+PREMIERE_PHRASE = re.compile(r"^\s*(.*?)(?:\.(?:\s|$)|$)", re.S)
 
 def extraire(reponse, choix):
     lettre = FORMAT_LETTRE.match(reponse)
-    trouves = cites(lettre.group(2) if lettre else reponse, choix)
-    if len(trouves) == 1:
-        return trouves[0]
-    if lettre and not trouves:
-        return 'ABCD'.index(lettre.group(1))
-    return None
+    if lettre:
+        trouves = cites(lettre.group(2), choix)
+        if not trouves:
+            return 'ABCD'.index(lettre.group(1))
+        return trouves[0] if len(trouves) == 1 else None
+    premiere = cle(PREMIERE_PHRASE.match(reponse).group(1))
+    exacts = [i for i, c in enumerate(choix) if cle(c) == premiere]
+    if len(exacts) == 1:
+        return exacts[0]
+    trouves = cites(reponse, choix)
+    return trouves[0] if len(trouves) == 1 else None
 
 def figure_dans(texte, choix, i):
     propres = mots_propres(choix)[i]
@@ -378,6 +385,15 @@ def comparer_fichiers(chemin_a, chemin_b, graine):
     a, b = (json.load(open(c, encoding='utf-8')) for c in (chemin_a, chemin_b))
     with open(a['qcm'], encoding='utf-8') as f:
         questions = {q['id']: q for q in map(json.loads, f)}
+    # On relit les réponses générées avec la règle actuelle de extraire(), pour que les deux fichiers
+    # soient notés pareil même s'ils ont été faits avec une version plus ancienne
+    for r in (a, b):
+        for details in r['details'].values():
+            for d in details:
+                for condition in r['conditions']:
+                    if 'reponses' in d[condition]:
+                        d[condition]['extraits'] = [extraire(x, questions[d['id']]['choix']) for x in d[condition]['reponses']]
+                        d[condition]['vote'] = vote(d[condition]['extraits'])
     modeles_a, modeles_b = list(a['details']), list(b['details'])
     if len(modeles_a) == 1:
         modeles_a = modeles_a * len(modeles_b)

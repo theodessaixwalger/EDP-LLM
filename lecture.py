@@ -93,6 +93,9 @@ def phrase_de(texte, position):
     return phrase if 30 <= len(phrase) <= 220 else None
 
 # --- Les faits qu'on sait repérer ---
+# Le texte de Wikipédia a perdu ses dates et ses nombres : « un peintre français du » est une réponse coupée
+COUPEE = re.compile(r"\b(de|du|des|la|le|les|à|au|aux|en|et|par|un|une|d'|l')$")
+
 def faits(titre, texte):
     if TITRES_A_EVITER.match(titre):
         return []
@@ -104,6 +107,8 @@ def faits(titre, texte):
     def ajouter(fait, pool, questions, reponse, courte, position):
         reponse = reponse.strip(" '’-")
         if len(reponse) < 2 or len(reponse) > 45 or cle(reponse) in cle(x) or cle(x) in cle(reponse):
+            return
+        if COUPEE.search(reponse):
             return
         trouves.append({'fait': fait, 'pool': pool, 'questions': [maj(q) for q in questions], 'reponse': reponse,
                         'courte': maj(courte), 'justification': phrase_de(texte, position)})
@@ -307,7 +312,9 @@ def main():
             choix = faux[:p] + [fait['reponse']] + faux[p:]
             exemple.update(choix=choix, reponse_juste=p)
             message = avec_les_choix({'question': question, 'choix': choix})
-            reponse = f"{'ABCD'[p]}) {fait['reponse'].rstrip('.')}."
+            # Le texte du choix d'abord, recopié du document. Avec « B) Lyon. » le modèle devait choisir la lettre
+            # avant d'avoir lu, il la tirait au hasard (22 % de lettres justes) et ne recopiait plus le document
+            reponse = f"{maj(fait['reponse'].rstrip('.'))}."
             if documents and fait['justification'] and random.random() < PART_JUSTIFICATION:
                 reponse += ' ' + fait['justification']
         else:

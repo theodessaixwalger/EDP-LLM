@@ -385,6 +385,43 @@ def tirer_conversation(paires, dialogues, cote):
         return conversation_longue_portee(paires, dialogues, reserve) + fin
     return conversation(paires, dialogues, reserve) + fin
 
+# --- Compréhension de lecture (lecture.py) ---
+# On peut ajouter des conversations qui finissent par un exemple de lecture (part_lecture du total),
+# sans toucher aux 40 000 autres. Elles ont la même part de longue portée que les autres.
+# Désactivé : à 25 %, le modèle apprend le format mais pas à choisir la bonne réponse dans le document,
+# il recopie surtout le premier choix de la liste. QCM v2 avec documents, génération au vote :
+# 45 % -> 24 % avec « B) Lyon. », 27 % avec « Lyon. ». Les modèles sont dans modeles/60M_lecture_*
+part_lecture = 0
+lectures = {'train': [], 'val': []}
+if part_lecture:
+    with open(chemins.LECTURE, 'r', encoding='utf-8') as f:
+        for ligne in f:
+            exemple = json.loads(ligne)
+            lectures['val' if est_val(exemple['article']) else 'train'].append(exemple)
+
+def echange_lecture(exemple):
+    question = dans_le_vocabulaire(exemple['question'])
+    # Le QCM garde exactement le format de evaluer_qcm.py, le reste est tapé comme un vrai message
+    if 'choix' not in exemple:
+        question = taper(question, random.random() < 0.3)
+    reponse = dans_le_vocabulaire(exemple['reponse'])
+    if not exemple['documents']:
+        return (question, reponse, False)
+    return (question, reponse, False, ''.join(ligne_document(dans_le_vocabulaire(d)) for d in exemple['documents']))
+
+def conversation_lecture(exemple, paires, dialogues):
+    fin = [echange_lecture(exemple)]
+    reserve = sum(map(taille_echange, fin))
+    if random.random() < part_longue_portee:
+        return conversation_longue_portee(paires, dialogues, reserve) + fin
+    return conversation(paires, dialogues, reserve) + fin
+
+def tirer_lectures(cote, nombre):
+    tas = lectures[cote][:]
+    random.shuffle(tas)
+    # Pas assez d'exemples (côté validation) : on en reprend au hasard
+    return tas[:nombre] if len(tas) >= nombre else tas + random.choices(tas, k=nombre - len(tas))
+
 # --- Encodage ---
 def encoder(conversations, avec_mesures):
     ids = np.full((len(conversations), taille_contexte + 1), tok.saut_de_ligne, dtype=np.uint16)
@@ -411,6 +448,13 @@ def encoder(conversations, avec_mesures):
 conversations_train = [tirer_conversation(paires_train, dialogues_train, 'train') for _ in range(nb_conversations_train)]
 conversations_val = [tirer_conversation(paires_val, dialogues_val, 'val') for _ in range(nb_conversations_val)]
 
+if part_lecture:
+    nb_lecture_train = round(nb_conversations_train * part_lecture / (1 - part_lecture))
+    nb_lecture_val = round(nb_conversations_val * part_lecture / (1 - part_lecture))
+    print(f"Exemples de lecture : {len(lectures['train']):,} pour l'entraînement, {len(lectures['val']):,} pour la validation")
+    conversations_train += [conversation_lecture(e, paires_train, dialogues_train) for e in tirer_lectures('train', nb_lecture_train)]
+    conversations_val += [conversation_lecture(e, paires_val, dialogues_val) for e in tirer_lectures('val', nb_lecture_val)]
+
 FICHIERS = {'train': chemins.CHAT_TRAIN, 'val': chemins.CHAT_VAL}
 
 for nom, conversations in (('train', conversations_train), ('val', conversations_val)):
@@ -426,5 +470,11 @@ exemple = next(c for c in conversations_train if len(c) >= 5 and len(c[-1]) == 4
 for question, reponse, _, *documents in exemple[-4:]:
     print(''.join(documents) + UTILISATEUR + question)
     print(ASSISTANT + reponse)
+
+if part_lecture:
+    print("\nFin d'une conversation de lecture :\n")
+    for question, reponse, _, *documents in conversations_train[nb_conversations_train + 1][-2:]:
+        print(''.join(documents) + UTILISATEUR + question)
+        print(ASSISTANT + reponse)
 
 print(f"\nTerminé : {chemins.CHAT_TRAIN}, {chemins.CHAT_VAL} créés")
