@@ -26,6 +26,12 @@ modeles/
 # Pareil pour le QCM d'évaluation, écrit à la main à partir d'articles Wikipédia.
 !donnees/qcm/
 
+# Base marketing : les pages Wikipédia et web se régénèrent (et pèsent lourd),
+# les fiches méthode sont écrites et relues à la main.
+!donnees/marketing/
+donnees/marketing/*
+!donnees/marketing/fiches/
+
 # Poids enregistrés ailleurs que dans modeles/ (copies, essais) : 200 Mo
 # chacun, bien trop lourds pour git.
 *.pt
