@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import torch
@@ -5,7 +6,8 @@ import torch.nn.functional as F
 from choix import repondre as repondre_par_choix, trouver_choix
 from model import MonLLM, bloquer_repetitions
 from outils import utiliser as utiliser_outil
-from recherche import Recherche, ligne_document
+from recherche import ligne_document
+from recherche_marketing import MODE_PAR_DEFAUT, MODES, RechercheRoutee, etiquette
 from tokeniseur import decoupage
 import chemins
 
@@ -30,7 +32,11 @@ tok = decoupage(modele.embed_tokens.num_embeddings)
 def longueur(texte):
     return len(tok.encoder(texte))
 
-recherche = Recherche() if os.path.exists(os.path.join(chemins.RECHERCHE, 'positions.npy')) else None
+# Où chercher avant une question : general (Wikipédia), marketing (base marketing) ou auto (les deux)
+parser = argparse.ArgumentParser()
+parser.add_argument('--recherche', choices=MODES, default=MODE_PAR_DEFAUT)
+args = parser.parse_args()
+recherche = RechercheRoutee(args.recherche) if os.path.exists(os.path.join(chemins.RECHERCHE, 'positions.npy')) else None
 
 def chercher_documents(message):
     outil = utiliser_outil(message)
@@ -39,9 +45,9 @@ def chercher_documents(message):
         return ligne_document(tok.nettoyer(resultat)[0]), [nom]
     if recherche is None:
         return '', []
-    trouves = recherche.documents_pour(message)
-    texte = ''.join(ligne_document(tok.nettoyer(passage)[0]) for _, passage in trouves)
-    return texte, [titre for titre, _ in reversed(trouves)]
+    trouves = recherche.trouver(message)
+    texte = ''.join(ligne_document(tok.nettoyer(document['texte'])[0]) for document in trouves)
+    return texte, [etiquette(document) for document in reversed(trouves)]
 
 # --- Mémoire ---
 def charger_memoire():

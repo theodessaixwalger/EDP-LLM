@@ -107,9 +107,11 @@ def debut_article(texte):
         passage = passage[:fin + 1] if fin > 200 else passage[:LONGUEUR_PASSAGE].rsplit(' ', 1)[0] + '…'
     return passage
 
-# --- Construction de l'index ---
-def construire():
-    os.makedirs(chemins.RECHERCHE, exist_ok=True)
+# --- Construction d'un index ---
+# passages : des dicts avec au moins 'titre' et 'texte' (le reste est gardé tel quel dans passages.jsonl).
+# 'longueur_article', s'il est là, sert à l'importance (un grand article passe devant un petit)
+def ecrire_index(passages, dossier):
+    os.makedirs(dossier, exist_ok=True)
     debut = time.time()
 
     seaux, docs, frequences = array.array('i'), array.array('i'), array.array('B')
@@ -117,32 +119,22 @@ def construire():
     articles = array.array('i')
     position = 0
 
-    with open(chemins.CORPUS_COLLECTE, 'r', encoding='utf-8') as entree, \
-         open(chemins.PASSAGES, 'wb') as sortie:
-        for ligne in entree:
-            try:
-                article = json.loads(ligne)
-            except json.JSONDecodeError:
-                continue
-            if article.get('source') != 'huggingface':
-                continue
-            passage = debut_article(article['texte'])
-            if len(passage) < LONGUEUR_MINIMALE_PASSAGE:
-                continue
-
-            octets = (json.dumps({'titre': article['titre'], 'texte': passage},
-                                 ensure_ascii=False) + '\n').encode('utf-8')
+    with open(os.path.join(dossier, 'passages.jsonl'), 'wb') as sortie:
+        for passage in passages:
+            if 'longueur_article' in passage:
+                articles.append(passage.pop('longueur_article'))
+            octets = (json.dumps(passage, ensure_ascii=False) + '\n').encode('utf-8')
             numero = len(positions)
             positions.append(position)
-            titres.append(cle_titre(article['titre']))
-            articles.append(len(article['texte']))
+            titres.append(cle_titre(passage['titre']))
             sortie.write(octets)
             position += len(octets)
 
             compte = {}
-            for mot in mots(article['titre']):
+            for mot in mots(passage['titre']):
                 compte[mot] = compte.get(mot, 0) + POIDS_TITRE
-            for mot in mots(passage):
+            # Les mots-clés d'une fiche servent à la trouver, sans être montrés au modèle
+            for mot in mots(passage['texte'] + ' ' + passage.get('mots_cles', '')):
                 compte[mot] = compte.get(mot, 0) + 1
             for mot, n in compte.items():
                 seaux.append(seau(mot))
@@ -151,7 +143,7 @@ def construire():
             longueurs.append(min(sum(compte.values()), 65535))
 
             if numero % 100000 == 0:
-                print(f"  {numero:,} passages ({time.time() - debut:.0f}s)")
+                print(f"  {numero:,} passages ({time.time() - debut:.0f}s)", flush=True)
 
     print(f"{len(positions):,} passages, {len(seaux):,} entrées d'index")
 
@@ -161,7 +153,7 @@ def construire():
     debuts = np.zeros(NB_SEAUX + 1, dtype=np.int64)
     np.cumsum(np.bincount(seaux, minlength=NB_SEAUX), out=debuts[1:])
 
-    fichier = lambda nom: os.path.join(chemins.RECHERCHE, nom)
+    fichier = lambda nom: os.path.join(dossier, nom)
     docs_tries = np.lib.format.open_memmap(fichier('docs.npy'), mode='w+', dtype=np.int32, shape=docs.shape)
     frequences_triees = np.lib.format.open_memmap(fichier('frequences.npy'), mode='w+', dtype=np.uint8, shape=docs.shape)
     largeur = NB_SEAUX // 16
@@ -178,13 +170,31 @@ def construire():
     np.save(fichier('longueurs.npy'), np.frombuffer(longueurs, dtype=np.uint16))
     np.save(fichier('positions.npy'), np.frombuffer(positions, dtype=np.int64))
     np.save(fichier('titres.npy'), np.frombuffer(titres, dtype=np.uint32))
-    np.save(fichier('articles.npy'), np.frombuffer(articles, dtype=np.int32))
-    print(f"Index écrit dans {chemins.RECHERCHE} ({time.time() - debut:.0f}s)")
+    if len(articles):
+        np.save(fichier('articles.npy'), np.frombuffer(articles, dtype=np.int32))
+    print(f"Index écrit dans {dossier} ({time.time() - debut:.0f}s)")
+
+# L'index général : le début (700 caractères) de chaque article du Wikipédia de Hugging Face
+def construire():
+    def passages():
+        with open(chemins.CORPUS_COLLECTE, 'r', encoding='utf-8') as entree:
+            for ligne in entree:
+                try:
+                    article = json.loads(ligne)
+                except json.JSONDecodeError:
+                    continue
+                if article.get('source') != 'huggingface':
+                    continue
+                passage = debut_article(article['texte'])
+                if len(passage) >= LONGUEUR_MINIMALE_PASSAGE:
+                    yield {'titre': article['titre'], 'texte': passage, 'longueur_article': len(article['texte'])}
+    ecrire_index(passages(), chemins.RECHERCHE)
 
 # --- Recherche ---
 class Recherche:
     def __init__(self, dossier=chemins.RECHERCHE):
         fichier = lambda nom: os.path.join(dossier, nom)
+        self.fichier_passages = fichier('passages.jsonl')
         # L'index (545 Mo) reste sur le disque, une recherche prend ~20 ms
         self.debuts = np.load(fichier('debuts.npy'), mmap_mode='r')
         self.docs = np.load(fichier('docs.npy'), mmap_mode='r')
@@ -216,10 +226,13 @@ class Recherche:
                 trouves.extend(int(n) for n in self.ordre_titres[debut:min(fin, debut + 10)])
         return trouves
 
-    def passage(self, numero):
-        with open(chemins.PASSAGES, 'rb') as f:
+    def fiche(self, numero):
+        with open(self.fichier_passages, 'rb') as f:
             f.seek(int(self.positions[numero]))
-            article = json.loads(f.readline())
+            return json.loads(f.readline())
+
+    def passage(self, numero):
+        article = self.fiche(numero)
         return article['titre'], article['texte']
 
     def chercher(self, question, n=1, seuil=0.0):

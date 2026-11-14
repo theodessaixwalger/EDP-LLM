@@ -245,7 +245,7 @@ details.replie > summary:hover { color: var(--texte); background: var(--fond-3);
       <div class="rang"><span>poids</span><b id="i-modele">—</b></div>
       <div class="rang"><span>calcul</span><b id="i-device">—</b></div>
       <div class="rang"><span>vocabulaire</span><b id="i-vocab">—</b></div>
-      <div class="rang"><span>Wikipédia</span><b id="i-passages">—</b></div>
+      <div class="rang"><span>recherche</span><b id="i-passages">—</b></div>
       <div class="rang"><span>préférences</span><b id="i-prefs">—</b></div>
     </div>
   </div>
@@ -365,7 +365,7 @@ function afficherSources(tour, sources) {
   if (!sources || !sources.length) return;
   const ligne = document.createElement('p');
   ligne.className = 'source';
-  ligne.append(OUTILS.includes(sources[0]) ? 'Outil : ' : 'Lu dans Wikipédia : ');
+  ligne.append(OUTILS.includes(sources[0]) ? 'Outil : ' : 'Lu dans : ');
   sources.forEach((titre, i) => {
     if (i) ligne.append(', ');
     const b = document.createElement('b');
@@ -624,7 +624,8 @@ $('neuf').onclick = async () => {
   $('i-modele').textContent = etat.modele.replace('checkpoint_', '').replace('.pt', '');
   $('i-device').textContent = etat.device;
   $('i-vocab').textContent = etat.vocabulaire + ' ' + (etat.decoupage || 'caractères');
-  $('i-passages').textContent = etat.passages ? etat.passages.toLocaleString('fr-FR') + ' articles' : 'non indexée';
+  $('i-passages').textContent = etat.passages
+    ? etat.passages.toLocaleString('fr-FR') + ' passages (' + etat.recherche + ')' : 'non indexée';
   $('i-prefs').textContent = etat.preferences;
   presentation = 'Modèle de ' + etat.parametres + ' M de paramètres, entraîné sur des romans français et Wikipédia. '
     + 'Il se trompe souvent — c\'est le but.';

@@ -40,6 +40,7 @@ WIKIPEDIA_COMPLEMENT = os.path.join(MARKETING, 'wikipedia_complement.jsonl')
 MARKETING_WEB = os.path.join(MARKETING, 'web.jsonl')
 FICHES = os.path.join(MARKETING, 'fiches')
 RECHERCHE_MARKETING = os.path.join(MARKETING, 'recherche')
+MMLU_MARKETING = os.path.join(MARKETING, 'mmlu_marketing_fr.jsonl')
 
 # --- Évaluation ---
 QCM = os.path.join(DONNEES, 'qcm', 'qcm_v2.jsonl')

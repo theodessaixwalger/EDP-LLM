@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import threading
@@ -8,7 +9,8 @@ import torch.nn.functional as F
 from choix import repondre as repondre_par_choix, trouver_choix
 from model import MonLLM, bloquer_repetitions
 from outils import utiliser as utiliser_outil
-from recherche import Recherche, ligne_document
+from recherche import ligne_document
+from recherche_marketing import MODE_PAR_DEFAUT, MODES, RechercheRoutee, etiquette
 from tokeniseur import decoupage
 import chemins
 
@@ -34,7 +36,11 @@ tok = decoupage(modele.embed_tokens.num_embeddings)
 def longueur(texte):
     return len(tok.encoder(texte))
 
-recherche = Recherche() if os.path.exists(os.path.join(chemins.RECHERCHE, 'positions.npy')) else None
+# Où chercher avant une question : general (Wikipédia), marketing (base marketing) ou auto (les deux)
+parser = argparse.ArgumentParser()
+parser.add_argument('--recherche', choices=MODES, default=MODE_PAR_DEFAUT)
+args = parser.parse_args()
+recherche = RechercheRoutee(args.recherche) if os.path.exists(os.path.join(chemins.RECHERCHE, 'positions.npy')) else None
 
 # Un seul modèle sur un seul GPU, les réponses passent une par une
 verrou = threading.Lock()
@@ -106,9 +112,9 @@ def chercher_documents(message):
         return ligne_document(tok.nettoyer(resultat)[0]), [nom]
     if recherche is None:
         return '', []
-    trouves = recherche.documents_pour(message)
-    texte = ''.join(ligne_document(tok.nettoyer(passage)[0]) for _, passage in trouves)
-    return texte, [titre for titre, _ in reversed(trouves)]
+    trouves = recherche.trouver(message)
+    texte = ''.join(ligne_document(tok.nettoyer(document['texte'])[0]) for document in trouves)
+    return texte, [etiquette(document) for document in reversed(trouves)]
 
 @torch.no_grad()
 def flux_reponse(contexte, chaleur):
@@ -165,6 +171,7 @@ class Interface(BaseHTTPRequestHandler):
                 'device': device,
                 'parametres': round(sum(p.numel() for p in modele.parameters()) / 1e6),
                 'passages': recherche.nb_passages if recherche else 0,
+                'recherche': recherche.mode if recherche else None,
                 'vocabulaire': tok.taille_vocab,
                 'decoupage': 'caractères' if len(tok.morceaux) == len(tok.alphabet) else 'sous-mots',
                 'preferences': compter_preferences(),
@@ -263,8 +270,8 @@ class Interface(BaseHTTPRequestHandler):
 
 unite = 'caractères' if len(tok.morceaux) == len(tok.alphabet) else 'morceaux'
 print(f"Modèle {fichier_modele} chargé sur {device}, fenêtre de {taille_contexte} {unite}")
-print("Recherche dans Wikipédia : " + (f"{recherche.nb_passages:,} articles" if recherche
-                                       else "pas d'index (lancer python recherche.py)"))
+print("Recherche : " + (f"mode {recherche.mode}, {recherche.nb_passages:,} passages" if recherche
+                         else "pas d'index (lancer python recherche.py)"))
 print(f"{len(memoire)} échanges en mémoire, {compter_preferences()} préférences enregistrées")
 print(f"\n  Interface : http://{HOTE}:{PORT}\n")
 ThreadingHTTPServer((HOTE, PORT), Interface).serve_forever()
